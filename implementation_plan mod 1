@@ -1,0 +1,172 @@
+# Implementation Plan — Module 1: Chrome Tab Audio Capture
+
+This plan details the technical architecture and implementation for **Module 1: Chrome Tab Audio Capture** of the local live subtitle system. The goal is to capture high-fidelity audio from the active Chrome tab (e.g., YouTube/Netflix) in real-time, process and verify it, and prepare PCM audio chunks for future local streaming (WebSocket to Python), with zero microphone dependency and low CPU overhead suitable for Intel UHD 620 CPU-only hardware.
+
+## Step 1 API Research & Architecture Analysis
+
+### 1. Which APIs are being used?
+* **`chrome.tabCapture` API**: Used in Manifest V3 to obtain a media stream ID for the targeted active tab (`chrome.tabCapture.getMediaStreamId`).
+* **`chrome.offscreen` API**: Manifest V3 background service workers cannot access DOM APIs or construct `AudioContext`. We create an offscreen document (`offscreen.html`) dedicated to hosting audio graph nodes and `getUserMedia`.
+* **Web Audio API**:
+  * `AudioContext`: Core audio processing graph runner.
+  * `MediaStreamAudioSourceNode`: Connects the captured tab `MediaStream` to the Web Audio pipeline.
+  * `MediaStreamAudioDestinationNode` / `AudioContext.destination`: Pipes captured audio back to speaker output so the user can continue hearing video audio normally.
+  * `AnalyserNode`: Computes real-time RMS/peak audio levels for visual UI feedback.
+  * `AudioWorkletNode` / PCM Processor: Extracts Float32/Int16 PCM audio buffers off the main UI thread with minimal CPU usage.
+
+### 2. Why is this approach appropriate?
+* **Manifest V3 Compliant**: Service workers lack DOM access. The `chrome.offscreen` document architecture is Google Chrome's official recommended pattern for DOM/Audio/Video operations in Manifest V3 extensions.
+* **Pure Tab Audio**: Captures digital PCM directly from Chrome's audio renderer process, ignoring microphone noise or room acoustics.
+* **Low Latency & Zero Overhead**: Uses native web audio graphs without external binary dependencies or paid APIs.
+
+### 3. Required Permissions
+* `"tabCapture"`: Required to request access to the active tab's audio stream via `chrome.tabCapture`.
+* `"offscreen"`: Required to spawn and manage the offscreen document that processes the audio graph.
+* `"activeTab"`: Grants permissions to interact with the currently active browser tab when the extension popup is opened.
+
+### 4. Tab Isolation
+* `chrome.tabCapture` captures **only** the selected/active tab specified by its `tabId`. Audio from other browser tabs or system applications is completely excluded.
+
+### 5. Microphone Independence
+* Audio is captured via `chromeMediaSource: 'tab'`, which hooks directly into Chrome's audio engine. **No microphone permission or access is requested or needed.**
+
+### 6. Chrome Restrictions & Caveats
+* **Default Tab Muting**: When Chrome captures a tab's stream, it mutes default tab output. We explicitly pass audio to `audioContext.destination` to preserve normal video listening.
+* **User Gesture Requirement**: Stream ID generation must originate from a user gesture (clicking "Start Capture" in the extension popup).
+* **Restricted Pages**: Tab capture is restricted on privileged browser pages (e.g. `chrome://` or Chrome Web Store pages). We implement explicit error handling for these pages.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **Audio Pass-Through**: By default, `chrome.tabCapture` mutes the active tab's audio output. The offscreen document implementation explicitly routes `MediaStreamAudioSourceNode` to `audioContext.destination` so you can continue listening to YouTube while capturing.
+
+> [!NOTE]
+> **Verification via WAV Export**: To verify captured tab audio without running a Python backend, the extension popup includes a "Download 5s WAV Sample" button. You can click it, download a `.wav` file, and play it in any media player to confirm it contains the exact audio of your YouTube video.
+
+---
+
+## Proposed Project Structure
+
+We will create a clean modular directory `live-subtitle-extension/` in the workspace:
+
+```text
+live-subtitle-extension/
+├── manifest.json
+├── popup/
+│   ├── popup.html
+│   ├── popup.css
+│   └── popup.js
+├── background/
+│   └── service-worker.js
+├── offscreen/
+│   ├── offscreen.html
+│   └── offscreen.js
+├── audio/
+│   └── audio-processor.js
+└── README.md
+```
+
+---
+
+## Proposed Changes
+
+### [NEW] `live-subtitle-extension/manifest.json`
+* Configures Manifest V3.
+* Sets permissions: `["tabCapture", "offscreen", "activeTab"]`.
+* Defines service worker background script.
+* Configures action popup (`popup/popup.html`).
+
+### [NEW] `live-subtitle-extension/popup/popup.html`
+* Sleek, high-contrast dark theme UI.
+* Displays status indicator (ACTIVE / INACTIVE / ERROR).
+* Includes "Start Capture" and "Stop Capture" buttons.
+* Real-time audio level meter bar (canvas / visual element).
+* Audio specs readout: Sample Rate (e.g. 48000 Hz), Channels (Stereo/Mono), Frames Processed, Peak Level (dB/%).
+* Audio Verification action: "Download 5s Sample WAV".
+* WebSocket toggle/status indicator for localhost integration.
+* Helpful error banner for invalid tabs or permission failures.
+
+### [NEW] `live-subtitle-extension/popup/popup.css`
+* Modern dark-mode palette (slate gray, cyan highlights, neon status LEDs).
+* Smooth transitions for metering bar and capture buttons.
+
+### [NEW] `live-subtitle-extension/popup/popup.js`
+* Listens to start/stop button clicks.
+* Sends `START_CAPTURE` and `STOP_CAPTURE` messages to background service worker.
+* Subscribes to real-time status and audio metering updates from background/offscreen.
+* Handles WAV sample download request and error display.
+
+### [NEW] `live-subtitle-extension/background/service-worker.js`
+* Listens for start capture trigger from popup.
+* Obtains active tab ID (`chrome.tabs.query`).
+* Calls `chrome.tabCapture.getMediaStreamId({ targetTabId })`.
+* Creates/ensures `chrome.offscreen` document exists (`offscreen/offscreen.html`).
+* Forwards stream ID to offscreen document.
+* Manages tab lifecycle (tab closed, tab updated) to automatically clean up stream sessions.
+
+### [NEW] `live-subtitle-extension/offscreen/offscreen.html`
+* HTML container for `offscreen.js`.
+
+### [NEW] `live-subtitle-extension/offscreen/offscreen.js`
+* Obtains tab `MediaStream` using `navigator.mediaDevices.getUserMedia` with `chromeMediaSourceId`.
+* Constructs `AudioContext`, `MediaStreamAudioSourceNode`, `AnalyserNode`.
+* Routes source node to `audioContext.destination` (speaker pass-through).
+* Runs periodic audio level extraction (RMS/Peak) and posts diagnostic messages to runtime.
+* Collects recent audio frames into a ring buffer for WAV file export.
+* Prepares lightweight PCM chunk streaming interface over WebSocket (`ws://localhost:8765`) ready for Module 2.
+* Cleans up tracks and closes AudioContext upon `STOP_CAPTURE`.
+
+### [NEW] `live-subtitle-extension/audio/audio-processor.js`
+* Contains clean utility functions for:
+  * Audio level computation (RMS & Peak dB conversions).
+  * PCM Float32 to Int16 conversion and resampling helpers.
+  * RIFF WAV encoder for exporting captured PCM buffers into downloadable `.wav` blobs.
+
+### [NEW] `live-subtitle-extension/README.md`
+* Step-by-step Chrome installation guide (Developer mode -> Load unpacked).
+* Quick start testing instructions (Tests 1 through 5).
+* Verification guide (Audio level meter + WAV export).
+* Architecture details & error handling documentation.
+
+---
+
+## Verification Plan
+
+### Manual Verification Steps
+
+1. **Load Extension in Chrome**:
+   * Navigate to `chrome://extensions`.
+   * Enable Developer Mode.
+   * Click "Load unpacked" and select `live-subtitle-extension/`.
+
+2. **Test 1 — YouTube Video Capture**:
+   * Open YouTube video (e.g., speech/news video).
+   * Open extension popup and click "Start Capture".
+   * Verify audio level meter animates smoothly in response to speech.
+   * Verify audio specs display (Sample Rate: 48000 Hz, Channels: 2, frames incrementing).
+   * Verify video audio is still audible from speakers.
+
+3. **Test 2 — Mute Video**:
+   * Mute the YouTube video player.
+   * Verify audio level meter drops to 0 / silent baseline.
+
+4. **Test 3 — Pause Video**:
+   * Pause YouTube video.
+   * Verify frame processing pauses/drops to 0 activity.
+
+5. **Test 4 — Stop Capture**:
+   * Click "Stop Capture" in popup.
+   * Verify status changes to "INACTIVE", streams clean up, and metering stops.
+
+6. **Test 5 — Tab Switching Behavior**:
+   * Start capture on YouTube tab.
+   * Switch to a different tab.
+   * Reopen extension popup on new tab.
+   * Confirm extension remains locked to the original YouTube tab's audio stream until stopped.
+
+7. **Audio Verification (WAV Download Test)**:
+   * Play video, click "Start Capture", let it capture 5 seconds of audio.
+   * Click "Download 5s Sample WAV" button.
+   * Open downloaded `.wav` file in Windows Media Player or VLC and verify audio is crisp and identical to YouTube.

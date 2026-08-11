@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Subtitle - Tab Audio Capture</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="card">
+    <header class="header">
+      <div class="brand">
+        <svg class="brand-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+        <span class="title">Live Subtitle</span>
+      </div>
+      <div id="statusBadge" class="status-badge status-inactive">
+        <span class="status-dot"></span>
+        <span id="statusText">Not Captured</span>
+      </div>
+    </header>
+
+    <!-- Error Alert Box -->
+    <div id="errorBanner" class="error-banner hidden">
+      <span class="error-icon">⚠️</span>
+      <span id="errorMessage" class="error-text">An error occurred</span>
+    </div>
+
+    <!-- Active Tab Info -->
+    <div id="tabInfoContainer" class="tab-info-container">
+      <span class="tab-label">Target:</span>
+      <span id="tabTitleText" class="tab-title">Active Browser Tab</span>
+    </div>
+
+    <!-- Controls -->
+    <div class="button-group">
+      <button id="btnStart" class="btn btn-start">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <polygon points="5 3 19 12 5 21 5 3"/>
+        </svg>
+        Start Capture
+      </button>
+      <button id="btnStop" class="btn btn-stop" disabled>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+          <rect x="6" y="6" width="12" height="12" rx="2"/>
+        </svg>
+        Stop Capture
+      </button>
+    </div>
+
+    <!-- Audio Level Meter -->
+    <div class="section meter-section">
+      <div class="section-header">
+        <span class="section-title">Audio Activity Level</span>
+        <span id="meterPercent" class="meter-value">0%</span>
+      </div>
+      <div class="meter-track">
+        <div id="meterFill" class="meter-fill" style="width: 0%;"></div>
+      </div>
+    </div>
+
+    <!-- Audio Diagnostics Grid -->
+    <div class="diagnostics-grid">
+      <div class="diag-item">
+        <span class="diag-label">Sample Rate</span>
+        <span id="diagSampleRate" class="diag-value">-- Hz</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Channels</span>
+        <span id="diagChannels" class="diag-value">--</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Audio Frames</span>
+        <span id="diagFrames" class="diag-value">0</span>
+      </div>
+      <div class="diag-item">
+        <span class="diag-label">Peak Signal</span>
+        <span id="diagPeak" class="diag-value">0.0 %</span>
+      </div>
+    </div>
+
+    <!-- Audio Verification Action -->
+    <div class="verification-section">
+      <button id="btnExportWav" class="btn btn-export" disabled>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/>
+          <line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Download 5s WAV Sample
+      </button>
+    </div>
+
+    <!-- Local WebSocket Readiness Toggle for Module 2 -->
+    <footer class="footer">
+      <div class="ws-toggle-container">
+        <label class="switch">
+          <input type="checkbox" id="toggleWs">
+          <span class="slider round"></span>
+        </label>
+        <span class="ws-label">Stream to Local Python (ws://localhost:8765)</span>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

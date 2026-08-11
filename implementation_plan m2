@@ -1,0 +1,172 @@
+# Implementation Plan — Module 2: Voice Activity Detection (VAD)
+
+This plan details the technical implementation for **Module 2: Voice Activity Detection (VAD)** of the local live subtitle system. The goal is to receive live PCM audio chunks from the Chrome Extension (Module 1), convert and preprocess the audio stream into 16kHz mono Float32 tensors, execute local Silero VAD inference via ONNX Runtime on CPU, apply temporal hysteresis smoothing (speech segmentation), and provide real-time speech / non-speech classification with minimal latency and near-zero CPU usage on Intel UHD 620 hardware.
+
+---
+
+## Step 1 — Inspection of Existing Module 1 Audio Pipeline
+
+1. **Audio Capture Source**: Chrome tab audio captured via `chrome.tabCapture.getMediaStreamId` inside an offscreen document (`offscreen/offscreen.js`).
+2. **Sample Rate**: Native browser hardware sample rate, typically **48000 Hz** (or 44100 Hz).
+3. **Channels**: **2 channels (Stereo)**, interleaved.
+4. **Sample Format**: JavaScript `ScriptProcessorNode` produces 32-bit float arrays (`Float32Array`) in range `[-1.0, 1.0]`. In Module 1, `offscreen.js` converts Float32 to 16-bit signed PCM integers (`Int16Array`) in range `[-32768, 32767]`.
+5. **Buffer / Chunk Size**: `ScriptProcessorNode` buffer size is 2048 samples per channel (~42.67ms per chunk at 48000 Hz).
+6. **Egress Method**: Binary WebSocket packets over `ws://localhost:8765`.
+7. **Required Minimum Change to Module 1**:
+   - Module 1 already includes a WebSocket client and a toggle switch in `popup.html`.
+   - To make live connection seamless, we will update `offscreen.js` to send an initial JSON metadata handshake message (`{ type: 'HANDSHAKE', sampleRate: 48000, channels: 2 }`) upon connection so the backend always dynamically detects sample rate, followed by raw binary PCM chunks.
+
+---
+
+## Step 2 — Silero VAD Selection & Analysis
+
+### 1. What Silero VAD does
+Silero VAD is an enterprise-grade, pre-trained deep learning Voice Activity Detector that produces a probability score (0.0 to 1.0) indicating the presence of human voice in an audio frame.
+
+### 2. Why VAD is needed in this project
+Running speech recognition (ASR models like Whisper) continuously on non-speech audio (silence, music, background noise) wastes CPU resources, increases thermal throttling on CPU-only laptops, and causes ASR models to hallucinate text on background music. VAD filters out silence and non-speech so ASR runs *only* when speech is actually present.
+
+### 3. Why Silero VAD is appropriate for CPU-only hardware
+* **Model Size**: ~2 MB total size.
+* **ONNX Runtime Engine**: Can be executed via `onnxruntime` (CPU) without heavy PyTorch dependencies.
+* **Ultra-Fast Execution**: Takes < 0.5 ms per 32ms audio frame on an Intel UHD 620 CPU.
+
+### 4–8. Expected Input Format & Preprocessing Requirements
+* **Expected Sample Rate**: **16000 Hz** (16 kHz).
+* **Expected Channels**: **1 channel (Mono)**.
+* **Expected Sample Type**: **32-bit Float32 array** normalized in `[-1.0, 1.0]`.
+* **Expected Frame Size**: **512 samples** (32ms at 16kHz).
+* **Resampling Required**: Yes. 48000 Hz (or 44100 Hz) stereo input must be downsampled 3:1 to 16000 Hz mono.
+* **Stereo → Mono Conversion Required**: Yes. Left and right channels are averaged: `(left + right) / 2`.
+
+---
+
+## Step 3 — Architecture & Data Flow
+
+```text
+┌─────────────────────────────────────────────────────────────┐
+│                   Chrome Extension (Module 1)               │
+│               Stereo Int16 PCM @ 48000Hz (2048 samples)     │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ WebSocket (ws://localhost:8765)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 Python VAD Backend (Module 2)                │
+│                                                             │
+│ 1. Audio Preprocessor (Int16 → Float32, Stereo → Mono, 16k)  │
+│ 2. Chunk Accumulator (512-sample / 32ms windowing)          │
+│ 3. Silero VAD ONNX Engine (Speech probability evaluation)   │
+│ 4. Hysteresis Segmenter (Speech Start / End state machine)  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                ┌──────────────┴──────────────┐
+                ▼                             ▼
+        [SPEECH DETECTED]             [NON-SPEECH]
+      Logs & Speech Segments           Discarded
+    (Ready for Module 3 ASR)
+```
+
+---
+
+## Proposed Directory Structure
+
+We will create a clean `backend/` directory alongside `live-subtitle-extension/`:
+
+```text
+live-subtitle/
+├── live-subtitle-extension/       # Module 1 Chrome Extension
+│   ├── manifest.json
+│   ├── popup/
+│   ├── background/
+│   ├── offscreen/
+│   └── audio/
+│
+├── backend/
+│   ├── vad/
+│   │   ├── __init__.py
+│   │   ├── silero_vad.onnx        # Local 2MB Silero VAD ONNX model file
+│   │   ├── vad_engine.py          # Silero VAD ONNX wrapper class
+│   │   ├── audio_utils.py         # Stereo-to-mono, resampling, Float32 normalization
+│   │   ├── segmenter.py           # Temporal hysteresis speech state machine
+│   │   ├── vad_server.py          # Asynchronous WebSocket server for live tab audio
+│   │   └── test_vad.py            # Comprehensive test suite (7 test scenarios)
+│   │
+│   └── requirements.txt           # lightweight dependencies (onnxruntime, numpy, websockets)
+│
+└── README.md                      # Unified documentation for Module 1 & Module 2
+```
+
+---
+
+## Proposed Changes
+
+### [MODIFY] [`live-subtitle-extension/offscreen/offscreen.js`](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/live-subtitle-extension/offscreen/offscreen.js)
+* Send JSON handshake (`{ type: 'HANDSHAKE', sampleRate, numChannels }`) when opening WebSocket to inform Python server of hardware sample rate.
+
+### [NEW] `backend/requirements.txt`
+* `onnxruntime>=1.15.0`
+* `numpy>=1.22.0`
+* `websockets>=11.0`
+* `scipy>=1.10.0`
+
+### [NEW] `backend/vad/audio_utils.py`
+* `int16_to_float32(pcm_int16)`: Normalizes `[-32768, 32767]` to `[-1.0, 1.0]`.
+* `stereo_to_mono(float32_stereo)`: De-interleaves and averages channels.
+* `resample_audio(audio_mono, orig_sr, target_sr=16000)`: Polyphase or linear downsampling from 48000Hz/44100Hz to 16000Hz.
+* `AudioPreprocessor`: Class buffering incoming arbitrary chunk sizes and emitting exact 512-sample Float32 frames at 16kHz.
+
+### [NEW] `backend/vad/vad_engine.py`
+* `SileroVadEngine`: Loads `silero_vad.onnx` model locally via ONNX Runtime CPU Provider.
+* Maintains internal hidden state `h` and `c` tensors across sequential audio frames.
+* Returns `probability: float` (0.0 to 1.0) per 32ms frame.
+
+### [NEW] `backend/vad/segmenter.py`
+* `SpeechSegmenter`: Stateful hysteresis segmenter with configurable parameters:
+  * `threshold = 0.5` (Speech start threshold)
+  * `neg_threshold = 0.35` (Speech end threshold)
+  * `min_speech_duration_ms = 250` (Filters out short noise bursts)
+  * `min_silence_duration_ms = 400` (Prevents word fragmentation during speech pauses)
+  * `speech_pad_ms = 100` (Pads start/end boundaries to avoid clipping word start/end)
+* Emits clean state events: `SPEECH_START`, `SPEECH_END (duration: X.XXs)`, and `SPEECH_CHUNK`.
+
+### [NEW] `backend/vad/vad_server.py`
+* Asynchronous WebSocket server running on `localhost:8765`.
+* Receives metadata handshake and binary PCM stream from Chrome Extension.
+* Feeds stream through `AudioPreprocessor` -> `SileroVadEngine` -> `SpeechSegmenter`.
+* Logs diagnostic updates and prints clean `SPEECH START` / `SPEECH END` output.
+
+### [NEW] `backend/vad/test_vad.py`
+* Test suite executing 7 distinct audio scenarios:
+  1. Clear human speech.
+  2. Complete silence.
+  3. YouTube video speech audio.
+  4. Music without speech.
+  5. Speech mixed with background music.
+  6. Quiet speech.
+  7. Fast speech.
+* Measures and logs: CPU usage, inference time per frame, audio duration processed, Real-Time Factor (RTF), memory usage.
+
+---
+
+## User Review Required
+
+> [!IMPORTANT]
+> **ONNX Runtime (CPU-Only)**: We use `onnxruntime` CPU build to execute Silero VAD without downloading heavy PyTorch dependencies (~200MB+). This keeps memory footprint under 50MB and execution time under 0.5ms per 32ms audio frame on Intel UHD 620 CPU.
+
+> [!NOTE]
+> **Silero VAD ONNX Model**: We bundle/download the official 2MB `silero_vad.onnx` model file directly into `backend/vad/` for 100% offline, local-only execution without external API calls.
+
+---
+
+## Verification Plan
+
+### Automated Tests
+* Run `python backend/vad/test_vad.py`:
+  * Validates VAD accuracy on speech, silence, music, and background noise audio files.
+  * Verifies Real-Time Factor (RTF) << 1.0 (expecting ~0.01 - 0.05 RTF).
+
+### Live Verification with Chrome Extension
+1. Start local VAD server: `python backend/vad/vad_server.py`.
+2. Open Chrome extension popup on a YouTube video and enable "Stream to Local Python".
+3. Click "Start Capture".
+4. Speak / play speech video: Confirm `SPEECH START` and `SPEECH END` log events trigger cleanly in the terminal console without false positives during silence.

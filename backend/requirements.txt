@@ -1,0 +1,7 @@
+# Module 2 — Voice Activity Detection (VAD) Dependencies
+# Lightweight, CPU-only requirements compatible with Intel UHD 620
+
+onnxruntime>=1.15.0
+numpy>=1.22.0
+websockets>=11.0
+scipy>=1.10.0

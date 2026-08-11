@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Local audio capture files / tests
+*.wav
+selftest.wav
+capture.wav
+
+# IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Silero VAD model (optional: auto-downloaded on first run)
+# backend/vad/silero_vad.onnx

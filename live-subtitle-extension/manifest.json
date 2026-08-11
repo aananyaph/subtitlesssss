@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Live Subtitle - Tab Audio Capture",
+  "version": "1.0.0",
+  "description": "Module 1: Active tab audio capture for local live subtitle generation (no microphone required).",
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "activeTab",
+    "tabs"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  }
+}
