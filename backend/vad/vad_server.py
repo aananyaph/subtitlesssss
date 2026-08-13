@@ -84,7 +84,7 @@ class VadServerSession:
                 # NOTE: In Module 3, event['audio_pcm'] will be dispatched to local ASR (Whisper / faster-whisper)
 
 
-async def handle_client(websocket, path):
+async def handle_client(websocket, path=None):
     logging.info(f"[VAD Server] Client connected from {websocket.remote_address}")
     
     # Instantiate VAD engine for session
@@ -111,7 +111,7 @@ async def main():
     logging.info(f"Starting Module 2 Local VAD Server on ws://{HOST}:{PORT}...")
     async with websockets.serve(handle_client, HOST, PORT):
         logging.info(f"Server ready. Open Chrome Extension and click 'Start Capture' with WebSocket enabled.")
-        await asyncio.future()  # Run forever
+        await asyncio.Event().wait()  # Run forever
 
 
 if __name__ == "__main__":

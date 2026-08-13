@@ -32,6 +32,9 @@ class SileroVadEngine:
         self.input_specs = {i.name: i for i in self.session.get_inputs()}
         self.output_specs = {o.name: o for o in self.session.get_outputs()}
 
+        print(f"[SileroVAD Specs] Inputs : {[(i.name, i.shape, i.type) for i in self.session.get_inputs()]}")
+        print(f"[SileroVAD Specs] Outputs: {[(o.name, o.shape, o.type) for o in self.session.get_outputs()]}")
+
         self.reset_state()
 
     def _ensure_model_exists(self):
@@ -46,7 +49,19 @@ class SileroVadEngine:
 
     def reset_state(self):
         """Resets recurrent hidden state for new audio stream session."""
-        self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        if "h" in self.input_specs and "c" in self.input_specs:
+            # Shape for h and c in Silero VAD v4: [1, 1, 64] or [2, 1, 64]
+            h_shape = self.input_specs["h"].shape
+            c_shape = self.input_specs["c"].shape
+            h_dim = [dim if isinstance(dim, int) else 1 for dim in h_shape]
+            c_dim = [dim if isinstance(dim, int) else 1 for dim in c_shape]
+            self._h = np.zeros(h_dim, dtype=np.float32)
+            self._c = np.zeros(c_dim, dtype=np.float32)
+            self._state = None
+        else:
+            self._state = np.zeros((2, 1, 128), dtype=np.float32)
+            self._h = None
+            self._c = None
 
     def predict(self, frame_float32: np.ndarray, sample_rate: int = 16000) -> float:
         """Executes VAD inference on a 1D Float32 frame (e.g. 512 samples @ 16kHz).
