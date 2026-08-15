@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live Subtitle - Tab Audio Capture</title>
+  <title>Live Subtitle - Application Controls</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -19,7 +19,7 @@
       </div>
       <div id="statusBadge" class="status-badge status-inactive">
         <span class="status-dot"></span>
-        <span id="statusText">Not Captured</span>
+        <span id="statusText">Disconnected</span>
       </div>
     </header>
 
@@ -35,50 +35,70 @@
       <span id="tabTitleText" class="tab-title">Active Browser Tab</span>
     </div>
 
-    <!-- Controls -->
+    <!-- Primary Captions Start / Stop Control -->
     <div class="button-group">
       <button id="btnStart" class="btn btn-start">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
-        Start Capture
+        Start Captions
       </button>
       <button id="btnStop" class="btn btn-stop" disabled>
         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
           <rect x="6" y="6" width="12" height="12" rx="2"/>
         </svg>
-        Stop Capture
+        Stop Captions
       </button>
     </div>
 
-    <!-- Audio Level Meter -->
+    <!-- User Settings Controls -->
+    <div class="settings-card">
+      <div class="settings-header">
+        <span class="settings-title">Subtitle Options</span>
+      </div>
+      
+      <div class="setting-row">
+        <label for="selectSize" class="setting-label">Font Size</label>
+        <select id="selectSize" class="setting-select">
+          <option value="small">Small (20px)</option>
+          <option value="medium" selected>Medium (28px)</option>
+          <option value="large">Large (36px)</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <label for="selectPosition" class="setting-label">Position</label>
+        <select id="selectPosition" class="setting-select">
+          <option value="bottom" selected>Bottom</option>
+          <option value="middle">Middle</option>
+          <option value="top">Top</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <label for="selectLanguage" class="setting-label">Language</label>
+        <select id="selectLanguage" class="setting-select">
+          <option value="auto" selected>Auto Detect</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+
+      <div class="setting-row">
+        <label for="selectModel" class="setting-label">ASR Model</label>
+        <select id="selectModel" class="setting-select">
+          <option value="tiny" selected>tiny (int8 CPU)</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Audio Activity Level -->
     <div class="section meter-section">
       <div class="section-header">
-        <span class="section-title">Audio Activity Level</span>
+        <span class="section-title">Audio Activity</span>
         <span id="meterPercent" class="meter-value">0%</span>
       </div>
       <div class="meter-track">
         <div id="meterFill" class="meter-fill" style="width: 0%;"></div>
-      </div>
-    </div>
-
-    <!-- Audio Diagnostics Grid -->
-    <div class="diagnostics-grid">
-      <div class="diag-item">
-        <span class="diag-label">Sample Rate</span>
-        <span id="diagSampleRate" class="diag-value">-- Hz</span>
-      </div>
-      <div class="diag-item">
-        <span class="diag-label">Channels</span>
-        <span id="diagChannels" class="diag-value">--</span>
-      </div>
-      <div class="diag-item">
-        <span class="diag-label">Audio Frames</span>
-        <span id="diagFrames" class="diag-value">0</span>
-      </div>
-      <div class="diag-item">
-        <span class="diag-label">Peak Signal</span>
-        <span id="diagPeak" class="diag-value">0.0 %</span>
       </div>
     </div>
 
@@ -94,11 +114,11 @@
       </button>
     </div>
 
-    <!-- Local WebSocket Readiness Toggle for Module 2 -->
+    <!-- Local Backend Connection Toggle -->
     <footer class="footer">
       <div class="ws-toggle-container">
         <label class="switch">
-          <input type="checkbox" id="toggleWs">
+          <input type="checkbox" id="toggleWs" checked>
           <span class="slider round"></span>
         </label>
         <span class="ws-label">Stream to Local Python (ws://localhost:8765)</span>

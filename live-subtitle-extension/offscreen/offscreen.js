@@ -31,7 +31,7 @@ let lastDiagnosticsUpdate = 0;
 
 // Localhost WebSocket settings for Module 2 readiness
 let wsUrl = 'ws://localhost:8765';
-let wsEnabled = false;
+let wsEnabled = true;
 
 console.log('[Offscreen Engine] Offscreen document initialized.');
 
@@ -78,6 +78,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
       break;
 
+    case 'SEND_CONTROL_MESSAGE':
+      if (websocketClient && websocketClient.readyState === WebSocket.OPEN && message.control) {
+        websocketClient.send(JSON.stringify(message.control));
+      }
+      sendResponse({ success: true });
+      break;
+
+
     default:
       break;
   }
@@ -123,6 +131,9 @@ async function handleStartCapture(streamId, tabId, tabTitle) {
 
     // 2. Initialize AudioContext & Nodes
     audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume();
+    }
     sourceNode = audioContext.createMediaStreamSource(mediaStream);
 
     // CRITICAL: Route captured audio to speakers so the user can still hear the video!
@@ -149,6 +160,10 @@ async function handleStartCapture(streamId, tabId, tabTitle) {
     // 5. Audio Process Loop Callback
     processorNode.onaudioprocess = (audioProcessingEvent) => {
       if (!isCapturing) return;
+
+      if (audioContext && audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
 
       const inputBuffer = audioProcessingEvent.inputBuffer;
       const numChannels = inputBuffer.numberOfChannels;
@@ -270,8 +285,12 @@ async function exportWavDataUrl() {
  * Initializes WebSocket connection to localhost Python server (Module 2 readiness).
  */
 function initWebSocket() {
+  if (websocketClient && (websocketClient.readyState === WebSocket.OPEN || websocketClient.readyState === WebSocket.CONNECTING)) {
+    return;
+  }
+
   if (websocketClient) {
-    websocketClient.close();
+    try { websocketClient.close(); } catch (e) {}
     websocketClient = null;
   }
 
@@ -291,8 +310,25 @@ function initWebSocket() {
       websocketClient.send(JSON.stringify(handshake));
     };
 
+    websocketClient.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'partial' || data.type === 'final' || data.type === 'correction' || data.type === 'flush_ack') {
+          // Forward transcript or flush ack to service worker to route to active tab
+          chrome.runtime.sendMessage({
+            type: 'TRANSCRIPT_EVENT',
+            transcript: data,
+            tabId: activeTabId
+          }).catch(() => {}); // Ignore error if service worker isn't listening yet
+        }
+      } catch (err) {
+        console.warn('[Offscreen Engine] Failed to parse WebSocket message:', err);
+      }
+    };
+
+
     websocketClient.onerror = (err) => {
-      console.warn('[Offscreen Engine] WebSocket connection error (local server may not be running yet).');
+      console.warn('[Offscreen Engine] WebSocket connection error (check if backend pipeline_server.py is running).');
     };
 
     websocketClient.onclose = () => {

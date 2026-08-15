@@ -1,0 +1,54 @@
+# Module 5 Implementation Plan: Subtitle Overlay
+
+This plan details how the local subtitle overlay will be implemented within the existing Chrome Extension to display transcripts received from the local Python backend over HTML5 videos (like YouTube and Netflix).
+
+## 1. Extension Architecture Updates
+
+**Current State:**
+- The extension captures audio via `offscreen.js`.
+- `offscreen.js` sends audio via WebSocket to `pipeline_server.py`.
+- No content scripts exist. No incoming WebSocket messages are handled.
+
+**Proposed Updates:**
+1. **`manifest.json`**:
+   - Add a content script (`content/overlay.js` and `content/overlay.css`) that will be injected into all web pages (`<all_urls>`).
+2. **`offscreen/offscreen.js`**:
+   - Add a `websocketClient.onmessage` handler to receive JSON messages from the Python backend.
+   - Forward these messages to the service worker (or broadcast them) using `chrome.runtime.sendMessage`.
+3. **`background/service-worker.js`**:
+   - Intercept the transcript messages from `offscreen.js`.
+   - Route them specifically to the active capturing tab using `chrome.tabs.sendMessage(currentCaptureState.tabId, ...)`.
+
+## 2. Content Script (`content/overlay.js` & `.css`)
+
+The content script will run on the webpage (e.g., YouTube) and manage the UI overlay.
+
+### Video Detection
+- A polling mechanism (or `MutationObserver`) will scan the DOM for a visible, playing `<video>` element.
+- It handles dynamic pages (like YouTube/Netflix) where the video element might be created after the page loads.
+- If the video changes (e.g., navigating to a new YouTube video), the script will detect the new video element and re-attach the overlay.
+
+### Overlay Injection & Fullscreen Handling
+- The overlay (`<div id="live-subtitle-overlay">`) will be injected into the DOM.
+- **Positioning**: Rather than relying on fixed coordinates on the screen, the overlay will be appended to the video's direct parent container (or the `document.fullscreenElement` when in fullscreen mode). This ensures it naturally scales and remains visible even if the user resizes the window, enters fullscreen, or if the page layout changes.
+- CSS will use `position: absolute`, `bottom: 10%`, `width: 100%`, and `pointer-events: none` to ensure it floats over the video without blocking clicks to the player controls.
+
+### Transcript Rendering
+- **State Management**: The overlay will track the current active subtitle.
+- **Partial Transcripts**: Replaces the current text immediately to show real-time progress.
+- **Final Transcripts**: Replaces the text one last time and starts a cleanup timer (e.g., 3-4 seconds).
+- **Cleanup**: If no new speech arrives within the timer, the subtitle fades out, preventing stale text from sitting on the screen permanently.
+
+### Styling (`content/overlay.css`)
+- Clean, readable aesthetics: white text, semi-transparent black background (`rgba(0,0,0,0.7)`), rounded corners, readable sans-serif font, text shadows for high contrast, and smooth CSS transitions for appearing/disappearing.
+
+## User Review Required
+
+> [!IMPORTANT]
+> Because I will be adding a new content script to `manifest.json`, **you will need to reload the unpacked extension in `chrome://extensions/`** after I make these changes.
+
+## Open Questions
+
+None at this time. The architecture cleanly separates the background audio capture from the frontend UI rendering.
+
+If this plan looks good, click **Proceed** and I will implement Module 5!

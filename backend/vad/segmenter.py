@@ -22,7 +22,8 @@ class SpeechSegmenter:
         min_speech_duration_ms: float = 250.0,
         min_silence_duration_ms: float = 400.0,
         sample_rate: int = 16000,
-        frame_size: int = 512
+        frame_size: int = 512,
+        min_chunk_floor_sec: float = 1.0,
     ):
         self.threshold = threshold
         self.neg_threshold = neg_threshold
@@ -30,6 +31,7 @@ class SpeechSegmenter:
         self.min_silence_duration_ms = min_silence_duration_ms
         self.sample_rate = sample_rate
         self.frame_size = frame_size
+        self.min_chunk_floor_sec = min_chunk_floor_sec
 
         self.ms_per_frame = (frame_size / float(sample_rate)) * 1000.0  # ~32ms per 512 samples @ 16kHz
         self.min_speech_frames = int(np.ceil(min_speech_duration_ms / self.ms_per_frame))

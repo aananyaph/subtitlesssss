@@ -1,0 +1,25 @@
+# Module 7 Completed: Application Features and User Controls
+
+Module 7 implementation is complete! Here is a breakdown of the features implemented, UI updates, settings persistence, and architectural details.
+
+## 1. Files Changed & Added
+
+- **`manifest.json`**: Added `"storage"` permission for persistent settings (`chrome.storage.sync`).
+- **`popup/popup.html`**: Added primary **Start Captions** / **Stop Captions** controls, visual status badge (`Disconnected`, `Connecting...`, `Connected`, `Listening`, `Error`), and user options (Font Size, Position, Language, Model).
+- **`popup/popup.css`**: Styled status badge variants, settings card container, rows, labels, and dropdown selectors.
+- **`popup/popup.js`**: Implemented `chrome.storage.sync` persistence, real-time settings relay (`UPDATE_SETTINGS`), status state updates, and user-friendly error banners.
+- **`content/overlay.js`**: Added dynamic `applySettings` function for font size (`small`: 20px, `medium`: 28px, `large`: 36px) and vertical position (`bottom`, `middle`, `top`) without requiring page reloads.
+- **`background/service-worker.js`**: Added `UPDATE_SETTINGS` message handler to relay styling changes from popup to content script.
+- **`README.md`**: Updated with full user flow, permissions rationale, settings guide, local-only privacy architecture, and known limitations.
+
+---
+
+## 2. Features Implemented
+
+1. **Start Captions / Stop Captions**: Primary toggle control with clear visual state changes and duplicate capture prevention.
+2. **Status Indicator**: Clean visual badge indicating `Disconnected`, `Connecting...`, `Connected`, `Listening`, or `Error`.
+3. **Font Size**: Dynamically adjusts subtitle text size (`Small`, `Medium`, `Large`) on active overlay without page reloads.
+4. **Positioning**: Dynamically moves subtitle overlay (`Bottom`, `Middle`, `Top`) over video.
+5. **Language & Model Selection**: Configurable options (`Auto Detect` / `English`, `tiny int8 CPU`) communicated to local Python backend.
+6. **Persistent Storage**: All settings automatically saved to `chrome.storage.sync` and restored when popup is re-opened or browser restarts.
+7. **User-Friendly Error Handling**: Catch and display friendly error banners ("Local subtitle service is unavailable.", "Unable to connect to local service.") instead of raw stack traces.

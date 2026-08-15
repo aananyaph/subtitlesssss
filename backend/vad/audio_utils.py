@@ -34,15 +34,11 @@ def stereo_to_mono(interleaved_stereo: np.ndarray) -> np.ndarray:
 
 
 def resample_audio(audio_mono: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
-    """Resamples mono Float32 audio array from orig_sr to target_sr (default 16000 Hz)."""
+    """Resamples mono Float32 audio array from orig_sr to target_sr (default 16000 Hz).
+    Uses scipy.signal.resample_poly for anti-aliased polyphase downsampling.
+    """
     if orig_sr == target_sr or len(audio_mono) == 0:
         return audio_mono.astype(np.float32)
-    
-    # Fast exact decimation for integer ratios (e.g., 48000Hz -> 16000Hz = 3:1)
-    # Avoids boundary transient distortion from chunked polyphase filtering
-    if orig_sr % target_sr == 0:
-        factor = orig_sr // target_sr
-        return audio_mono[::factor].astype(np.float32)
 
     if HAS_SCIPY:
         gcd = np.gcd(orig_sr, target_sr)
@@ -51,12 +47,17 @@ def resample_audio(audio_mono: np.ndarray, orig_sr: int, target_sr: int = 16000)
         resampled = resample_poly(audio_mono, up, down)
         return resampled.astype(np.float32)
     else:
+        # Fallback to integer decimation or interpolation if scipy is unavailable
+        if orig_sr % target_sr == 0:
+            factor = orig_sr // target_sr
+            return audio_mono[::factor].astype(np.float32)
         duration = len(audio_mono) / float(orig_sr)
         num_target_samples = int(np.round(duration * target_sr))
         orig_indices = np.linspace(0, len(audio_mono) - 1, num=len(audio_mono))
         target_indices = np.linspace(0, len(audio_mono) - 1, num=num_target_samples)
         resampled = np.interp(target_indices, orig_indices, audio_mono)
         return resampled.astype(np.float32)
+
 
 
 class AudioPreprocessor:

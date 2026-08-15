@@ -1,8 +1,15 @@
 /**
- * Popup Controller
- * Connects UI interactions to background service worker & offscreen audio engine,
- * renders real-time audio diagnostics, handles WAV sample exports & error banners.
+ * Module 7 — Application Features and User Controls (Popup Controller)
+ * Manages Start/Stop caption buttons, status badges, persistent settings storage
+ * (chrome.storage.sync), and real-time settings relay to content script and Python backend.
  */
+
+const DEFAULT_SETTINGS = {
+  fontSize: 'medium',
+  position: 'bottom',
+  language: 'auto',
+  model: 'tiny'
+};
 
 document.addEventListener('DOMContentLoaded', async () => {
   const statusBadge = document.getElementById('statusBadge');
@@ -17,15 +24,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnExportWav = document.getElementById('btnExportWav');
   const toggleWs = document.getElementById('toggleWs');
 
+  const selectSize = document.getElementById('selectSize');
+  const selectPosition = document.getElementById('selectPosition');
+  const selectLanguage = document.getElementById('selectLanguage');
+  const selectModel = document.getElementById('selectModel');
+
   const meterFill = document.getElementById('meterFill');
   const meterPercent = document.getElementById('meterPercent');
 
-  const diagSampleRate = document.getElementById('diagSampleRate');
-  const diagChannels = document.getElementById('diagChannels');
-  const diagFrames = document.getElementById('diagFrames');
-  const diagPeak = document.getElementById('diagPeak');
+  let currentSettings = { ...DEFAULT_SETTINGS };
 
-  // Query active tab title to display in header
+  // 1. Query active tab title
   try {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tabs && tabs.length > 0) {
@@ -35,20 +44,56 @@ document.addEventListener('DOMContentLoaded', async () => {
     tabTitleText.textContent = 'Active Tab';
   }
 
-  // Fetch initial capture status from background worker
+  // 2. Load persistent settings from chrome.storage.sync
+  if (chrome.storage && chrome.storage.sync) {
+    chrome.storage.sync.get(DEFAULT_SETTINGS, (items) => {
+      if (items) {
+        currentSettings = { ...DEFAULT_SETTINGS, ...items };
+        applySettingsToUi(currentSettings);
+      }
+    });
+  }
+
+  function applySettingsToUi(settings) {
+    if (settings.fontSize) selectSize.value = settings.fontSize;
+    if (settings.position) selectPosition.value = settings.position;
+    if (settings.language) selectLanguage.value = settings.language;
+    if (settings.model) selectModel.value = settings.model;
+  }
+
+  function saveSettings(newPartial) {
+    currentSettings = { ...currentSettings, ...newPartial };
+    if (chrome.storage && chrome.storage.sync) {
+      chrome.storage.sync.set(currentSettings);
+    }
+    // Relay updated settings to content script for real-time DOM update
+    chrome.runtime.sendMessage({
+      type: 'UPDATE_SETTINGS',
+      settings: currentSettings
+    }).catch(() => {});
+  }
+
+  // 3. Fetch initial capture status from background service worker
   chrome.runtime.sendMessage({ type: 'GET_STATUS' }, (response) => {
     if (chrome.runtime.lastError) {
-      showError('Failed to communicate with service worker.');
+      updateStatusBadge('DISCONNECTED');
+      showError('Local subtitle service is unavailable.');
       return;
     }
 
     if (response && response.success && response.state) {
       const state = response.state;
-      updateUiState(state.isCapturing, state.tabTitle, state.lastError);
+      if (state.isCapturing) {
+        updateStatusBadge('LISTENING');
+        updateUiState(true, state.tabTitle, state.lastError);
+      } else {
+        updateStatusBadge('CONNECTED');
+        updateUiState(false, '', state.lastError);
+      }
     }
   });
 
-  // Listen for live audio diagnostics & status updates
+  // 4. Listen for live audio diagnostics & status updates
   chrome.runtime.onMessage.addListener((message) => {
     if (message.type === 'AUDIO_DIAGNOSTICS' && message.diagnostics) {
       const diag = message.diagnostics;
@@ -56,64 +101,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  // --- Button Action Listeners ---
+  // --- Settings Event Listeners ---
+  selectSize.addEventListener('change', () => saveSettings({ fontSize: selectSize.value }));
+  selectPosition.addEventListener('change', () => saveSettings({ position: selectPosition.value }));
+  selectLanguage.addEventListener('change', () => saveSettings({ language: selectLanguage.value }));
+  selectModel.addEventListener('change', () => saveSettings({ model: selectModel.value }));
 
-  // Start Capture Button
+  // --- Start / Stop Action Listeners ---
   btnStart.addEventListener('click', () => {
     clearError();
+    updateStatusBadge('CONNECTING');
     btnStart.disabled = true;
-    btnStart.textContent = 'Starting...';
+
+    // Ensure WebSocket streaming is enabled
+    chrome.runtime.sendMessage({
+      type: 'SET_WEBSOCKET_CONFIG',
+      enabled: toggleWs.checked,
+      url: 'ws://localhost:8765'
+    });
 
     chrome.runtime.sendMessage({ type: 'START_CAPTURE' }, (response) => {
-      btnStart.textContent = 'Start Capture';
-      
       if (chrome.runtime.lastError) {
-        showError(chrome.runtime.lastError.message);
+        showError('Unable to connect to local service.');
+        updateStatusBadge('ERROR');
         updateUiState(false);
         return;
       }
 
       if (!response || !response.success) {
-        showError(response?.error || 'Failed to start tab audio capture.');
+        const err = response?.error || 'Unable to capture browser audio.';
+        showError(err);
+        updateStatusBadge('ERROR');
         updateUiState(false);
         return;
       }
 
+      updateStatusBadge('LISTENING');
       updateUiState(true, response.tabTitle);
     });
   });
 
-  // Stop Capture Button
   btnStop.addEventListener('click', () => {
     btnStop.disabled = true;
-    btnStop.textContent = 'Stopping...';
-
-    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE' }, (response) => {
-      btnStop.textContent = 'Stop Capture';
+    chrome.runtime.sendMessage({ type: 'STOP_CAPTURE' }, () => {
+      updateStatusBadge('CONNECTED');
       updateUiState(false);
     });
   });
 
-  // Export 5s WAV Sample Button
   btnExportWav.addEventListener('click', () => {
     btnExportWav.disabled = true;
-    btnExportWav.textContent = 'Preparing WAV...';
-
     chrome.runtime.sendMessage({ type: 'EXPORT_WAV_SAMPLE' }, (response) => {
-      btnExportWav.textContent = 'Download 5s WAV Sample';
       btnExportWav.disabled = false;
-
-      if (chrome.runtime.lastError) {
-        showError('WAV export error: ' + chrome.runtime.lastError.message);
+      if (chrome.runtime.lastError || !response || !response.success || !response.dataUrl) {
+        showError('No audio frames captured yet to export WAV.');
         return;
       }
 
-      if (!response || !response.success || !response.dataUrl) {
-        showError(response?.error || 'No audio frames captured yet to export WAV.');
-        return;
-      }
-
-      // Download WAV file
       const link = document.createElement('a');
       link.href = response.dataUrl;
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
@@ -124,7 +168,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // WebSocket Toggle Switch
   toggleWs.addEventListener('change', () => {
     chrome.runtime.sendMessage({
       type: 'SET_WEBSOCKET_CONFIG',
@@ -133,65 +176,70 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // --- Helper Rendering Functions ---
+  // --- Helper UI Functions ---
+
+  function updateStatusBadge(state) {
+    statusBadge.className = 'status-badge';
+    switch (state) {
+      case 'LISTENING':
+      case 'PROCESSING':
+        statusBadge.classList.add('status-active');
+        statusText.textContent = 'Listening';
+        break;
+      case 'CONNECTING':
+        statusBadge.classList.add('status-connecting');
+        statusText.textContent = 'Connecting...';
+        break;
+      case 'CONNECTED':
+        statusBadge.classList.add('status-inactive');
+        statusText.textContent = 'Connected';
+        break;
+      case 'ERROR':
+        statusBadge.classList.add('status-error');
+        statusText.textContent = 'Error';
+        break;
+      case 'DISCONNECTED':
+      default:
+        statusBadge.classList.add('status-inactive');
+        statusText.textContent = 'Disconnected';
+        break;
+    }
+  }
 
   function updateUiState(isCapturing, tabTitle = '', errorMsg = null) {
-    if (errorMsg) {
-      showError(errorMsg);
-    }
+    if (errorMsg) showError(errorMsg);
 
-    if (tabTitle) {
-      tabTitleText.textContent = tabTitle;
-    }
+    if (tabTitle) tabTitleText.textContent = tabTitle;
 
     if (isCapturing) {
-      statusBadge.className = 'status-badge status-active';
-      statusText.textContent = 'ACTIVE';
       btnStart.disabled = true;
       btnStop.disabled = false;
       btnExportWav.disabled = false;
     } else {
-      statusBadge.className = 'status-badge status-inactive';
-      statusText.textContent = 'Not Captured';
       btnStart.disabled = false;
       btnStop.disabled = true;
-      resetMeterAndDiagnostics();
+      resetMeter();
     }
   }
 
   function renderAudioDiagnostics(diag) {
     if (!diag.isCapturing) return;
 
-    // Update active tab badge if available
-    statusBadge.className = 'status-badge status-active';
-    statusText.textContent = 'ACTIVE';
+    updateStatusBadge(diag.wsConnected ? 'LISTENING' : 'CONNECTING');
     btnStart.disabled = true;
     btnStop.disabled = false;
     btnExportWav.disabled = false;
 
-    // Meter Bar (Percent: 0 to 100)
     const percent = Math.min(100, Math.max(0, diag.percent || 0));
     meterFill.style.width = percent + '%';
     meterPercent.textContent = percent + '%';
 
-    // Diagnostics readout
-    diagSampleRate.textContent = diag.sampleRate ? `${diag.sampleRate} Hz` : '-- Hz';
-    diagChannels.textContent = diag.numChannels ? (diag.numChannels === 2 ? '2 (Stereo)' : '1 (Mono)') : '--';
-    diagFrames.textContent = (diag.totalFramesProcessed || 0).toLocaleString();
-    diagPeak.textContent = `${percent}% (${(diag.db || -100).toFixed(1)} dB)`;
-
-    if (diag.tabTitle) {
-      tabTitleText.textContent = diag.tabTitle;
-    }
+    if (diag.tabTitle) tabTitleText.textContent = diag.tabTitle;
   }
 
-  function resetMeterAndDiagnostics() {
+  function resetMeter() {
     meterFill.style.width = '0%';
     meterPercent.textContent = '0%';
-    diagSampleRate.textContent = '-- Hz';
-    diagChannels.textContent = '--';
-    diagFrames.textContent = '0';
-    diagPeak.textContent = '0.0 %';
   }
 
   function showError(msg) {

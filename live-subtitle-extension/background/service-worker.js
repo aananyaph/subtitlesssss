@@ -44,6 +44,44 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       currentCaptureState.lastError = 'Audio stream ended unexpectedly (tab was closed or reloaded).';
       break;
 
+    case 'TRANSCRIPT_EVENT':
+      // Forward transcript to the active tab where the video is playing
+      if (currentCaptureState.isCapturing && currentCaptureState.tabId === message.tabId) {
+        chrome.tabs.sendMessage(currentCaptureState.tabId, {
+          type: 'RENDER_TRANSCRIPT',
+          transcript: message.transcript
+        }).catch(() => {
+          // The content script might not be injected or the tab might be navigating
+        });
+      }
+      break;
+
+    case 'VIDEO_CONTROL_EVENT':
+      if (currentCaptureState.isCapturing) {
+        hasOffscreenDocument().then((exists) => {
+          if (exists) {
+            chrome.runtime.sendMessage({
+              type: 'SEND_CONTROL_MESSAGE',
+              control: {
+                type: message.event,
+                video_time: message.video_time,
+                generation_id: message.generation_id
+              }
+            }).catch(() => {});
+          }
+        });
+      }
+      break;
+
+    case 'UPDATE_SETTINGS':
+      if (currentCaptureState.isCapturing && currentCaptureState.tabId) {
+        chrome.tabs.sendMessage(currentCaptureState.tabId, {
+          type: 'UPDATE_SETTINGS',
+          settings: message.settings
+        }).catch(() => {});
+      }
+      break;
+
     default:
       break;
   }
@@ -69,7 +107,21 @@ async function handleStartCapture() {
 
   console.log(`[Service Worker] Requesting stream ID for tab ID ${activeTab.id}: ${activeTab.title}`);
 
-  // 3. Obtain MediaStream ID from chrome.tabCapture
+  // 3. Ensure content script is injected (in case tab wasn't refreshed after install)
+  try {
+    await chrome.scripting.insertCSS({
+      target: { tabId: activeTab.id, allFrames: true },
+      files: ['content/overlay.css']
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId: activeTab.id, allFrames: true },
+      files: ['content/overlay.js']
+    });
+  } catch (e) {
+    console.warn('[Service Worker] Failed to inject overlay scripts (might already exist):', e);
+  }
+
+  // 4. Obtain MediaStream ID from chrome.tabCapture
   const streamId = await new Promise((resolve, reject) => {
     chrome.tabCapture.getMediaStreamId({ targetTabId: activeTab.id }, (id) => {
       if (chrome.runtime.lastError) {
