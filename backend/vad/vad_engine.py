@@ -48,7 +48,10 @@ class SileroVadEngine:
                 raise RuntimeError(f"Failed to download Silero VAD ONNX model: {e}")
 
     def reset_state(self):
-        """Resets recurrent hidden state for new audio stream session."""
+        """Resets recurrent hidden state and rolling window context for a new audio stream session."""
+        # 64-sample rolling context required by the v5 model's 576-sample input window
+        self._context_64 = np.zeros(64, dtype=np.float32)
+
         if "h" in self.input_specs and "c" in self.input_specs:
             # Shape for h and c in Silero VAD v4: [1, 1, 64] or [2, 1, 64]
             h_shape = self.input_specs["h"].shape
@@ -64,15 +67,32 @@ class SileroVadEngine:
             self._c = None
 
     def predict(self, frame_float32: np.ndarray, sample_rate: int = 16000) -> float:
-        """Executes VAD inference on a 1D Float32 frame (e.g. 512 samples @ 16kHz).
-        
+        """Executes VAD inference on a 1D Float32 frame (512 samples @ 16kHz).
+
+        The bundled silero_vad.onnx is a v5 model whose 16kHz input contract is a
+        576-sample window: 64 samples of rolling context followed by 512 new
+        samples. Feeding a bare 512-sample frame makes the model collapse to a
+        flat ~0.0006 output (silent detection failure), so the rolling context is
+        maintained here and prepended to every frame.
+
         Returns:
             probability: float value between 0.0 (non-speech/silence) and 1.0 (speech).
         """
         if frame_float32.ndim == 1:
-            tensor_in = np.expand_dims(frame_float32, axis=0)  # Shape [1, num_samples]
+            frame_1d = frame_float32
         else:
-            tensor_in = frame_float32
+            frame_1d = np.ravel(frame_float32)
+
+        if len(frame_1d) >= 512:
+            frame512 = frame_1d[-512:]
+        else:
+            frame512 = np.pad(frame_1d, (0, 512 - len(frame_1d)), mode="constant")
+
+        # Build the 576-sample input window (64 rolling context + 512 new samples)
+        window576 = np.concatenate([self._context_64, frame512.astype(np.float32)])
+        self._context_64 = window576[-64:].astype(np.float32)
+
+        tensor_in = np.expand_dims(window576, axis=0)  # Shape [1, 576]
 
         # Build dynamic ONNX inputs dict based on model input names
         inputs = {}

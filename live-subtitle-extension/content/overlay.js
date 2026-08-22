@@ -36,7 +36,7 @@ if (!window.__LIVE_SUBTITLE_OVERLAY_INJECTED__) {
   function attachOverlay(video) {
     createOverlay();
     
-    const targetParent = document.fullscreenElement || document.body;
+    const targetParent = (video && video.parentElement) || document.fullscreenElement || document.body;
     
     if (wrapper.parentElement !== targetParent) {
       targetParent.appendChild(wrapper);
@@ -267,17 +267,34 @@ if (!window.__LIVE_SUBTITLE_OVERLAY_INJECTED__) {
   });
 
   function renderTranscript(transcript) {
-    if (!currentVideo) return; // Nowhere to render
-
-    if (transcript.type === 'flush_ack') {
-      console.log(`[FLUSH] Received backend flush_ack for generation ${transcript.generation_id}`);
+    if (!currentVideo) {
+      currentVideo = findActiveVideo();
+    }
+    if (!currentVideo) {
+      console.log('[SubtitleOverlay] Transcript received but no active <video> element found on page.');
       return;
     }
 
-    // Module 10: Generation Guard
-    if (transcript.generation_id && transcript.generation_id < currentGenerationId) {
-      console.log(`[STALE] Discarded transcript from past generation ${transcript.generation_id} (active: ${currentGenerationId})`);
+    if (transcript.type === 'flush_ack') {
+      console.log(`[FLUSH] Received backend flush_ack for generation ${transcript.generation_id}`);
+      if (transcript.generation_id) currentGenerationId = transcript.generation_id;
       return;
+    }
+
+    // Module 10: Generation Guard & Fresh Session Resync
+    if (transcript.generation_id) {
+      if (transcript.generation_id > currentGenerationId) {
+        currentGenerationId = transcript.generation_id;
+      } else if (transcript.generation_id < currentGenerationId) {
+        // If backend started a fresh session (gen 1), resync frontend generation ID
+        if (transcript.generation_id === 1) {
+          console.log('[SubtitleOverlay] Resynced generation ID to fresh backend session (gen: 1)');
+          currentGenerationId = 1;
+        } else {
+          console.log(`[STALE] Discarded transcript from past generation ${transcript.generation_id} (active: ${currentGenerationId})`);
+          return;
+        }
+      }
     }
 
     createOverlay();

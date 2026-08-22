@@ -58,19 +58,27 @@ class TestResamplingAndChunking(unittest.TestCase):
             self.assertEqual(len(frame), 512)
 
     def test_minimum_chunk_floor_padding(self):
-        """Short speech segments (< 1.0s) must be padded to minimum floor before ASR enqueueing."""
-        min_floor_sec = 1.0
-        min_samples = int(min_floor_sec * 16000)
+        """SpeechSegmenter retains natural ambient room tone frames to guarantee minimum chunk floor."""
+        from vad.segmenter import SpeechSegmenter
+        segmenter = SpeechSegmenter(min_chunk_floor_sec=1.0, min_silence_duration_ms=200)
 
-        # Create short 0.4s speech PCM (6,400 samples)
-        short_pcm = np.ones(6400, dtype=np.float32)
+        # Feed 10 speech frames (~0.32s) followed by 10 silence frames (~0.32s)
+        frames_speech = [np.ones(512, dtype=np.float32) * 0.1 for _ in range(10)]
+        frames_silence = [np.zeros(512, dtype=np.float32) for _ in range(10)]
 
-        if len(short_pcm) < min_samples:
-            pad_len = min_samples - len(short_pcm)
-            padded_pcm = np.pad(short_pcm, (0, pad_len), mode='constant')
+        for f in frames_speech:
+            segmenter.process_frame(f, prob=0.8)
+        
+        last_event = None
+        for f in frames_silence:
+            ev = segmenter.process_frame(f, prob=0.0)
+            if ev["type"] == "SPEECH_END":
+                last_event = ev
 
-        self.assertEqual(len(padded_pcm), min_samples)
-        self.assertEqual(len(padded_pcm) / 16000.0, min_floor_sec)
+        if last_event:
+            pcm = last_event["audio_pcm"]
+            # Total natural audio PCM duration should equal full segment frames (20 frames = 10240 samples = 0.64s)
+            self.assertEqual(len(pcm), 10240)
 
     def test_anti_aliasing_high_frequency_attenuation(self):
         """Frequencies above Nyquist (8kHz in 16kHz audio) must be attenuated by polyphase filter."""

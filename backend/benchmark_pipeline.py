@@ -16,6 +16,7 @@ import sys
 import time
 import statistics
 import subprocess
+import traceback
 
 import numpy as np
 
@@ -134,6 +135,7 @@ async def run_benchmark_session(stream_duration_s: float = 10.0, chunk_delay: fl
                 if events_received and (time.perf_counter() - t_start > stream_duration_s + 2.0):
                     break
             except Exception:
+                traceback.print_exc()
                 break
 
     await asyncio.gather(sender(), receiver())
@@ -160,7 +162,7 @@ async def run_benchmark_session(stream_duration_s: float = 10.0, chunk_delay: fl
             ram_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
             cpu_pct = round(psutil.cpu_percent(interval=0.1), 1)
         except Exception:
-            pass
+            traceback.print_exc()
 
     return {
         "stream_duration_s": stream_duration_s,
@@ -199,6 +201,7 @@ async def main():
 
     except Exception as e:
         print(f"Benchmark error: {e}")
+        traceback.print_exc()
         print("Make sure pipeline_server.py is running before launching benchmark_pipeline.py.")
 
 

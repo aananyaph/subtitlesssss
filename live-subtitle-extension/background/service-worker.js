@@ -46,12 +46,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'TRANSCRIPT_EVENT':
       // Forward transcript to the active tab where the video is playing
-      if (currentCaptureState.isCapturing && currentCaptureState.tabId === message.tabId) {
-        chrome.tabs.sendMessage(currentCaptureState.tabId, {
+      const targetTabId = currentCaptureState.tabId || message.tabId;
+      if (currentCaptureState.isCapturing && targetTabId) {
+        chrome.tabs.sendMessage(Number(targetTabId), {
           type: 'RENDER_TRANSCRIPT',
           transcript: message.transcript
-        }).catch(() => {
-          // The content script might not be injected or the tab might be navigating
+        }).catch((err) => {
+          console.warn('[Service Worker] Could not send RENDER_TRANSCRIPT to tab:', err);
         });
       }
       break;

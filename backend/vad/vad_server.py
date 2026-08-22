@@ -52,7 +52,7 @@ class VadServerSession:
                 logging.info(f"[VAD Server] Handshake received from client: {data.get('client', 'Unknown')}")
                 logging.info(f"[VAD Server] Audio Config: {sample_rate} Hz, {num_channels} channels")
         except Exception as e:
-            logging.warn(f"[VAD Server] Could not parse text message: {e}")
+            logging.warning(f"[VAD Server] Could not parse text message: {e}", exc_info=True)
 
     def handle_pcm_data(self, raw_pcm_bytes: bytes):
         frames = self.preprocessor.process_raw_bytes(raw_pcm_bytes)
@@ -102,7 +102,7 @@ async def handle_client(websocket, path=None):
     except websockets.exceptions.ConnectionClosedError as e:
         logging.warn(f"[VAD Server] Client connection error: {e}")
     except Exception as e:
-        logging.error(f"[VAD Server] Unexpected session error: {e}")
+        logging.error(f"[VAD Server] Unexpected session error: {e}", exc_info=True)
     finally:
         logging.info("[VAD Server] Session terminated.")
 

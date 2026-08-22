@@ -2,6 +2,8 @@
 
 This document provides the final, complete performance report for the **Live Subtitle Overlay** system running on an Intel CPU target machine.
 
+> **Architecture note (Module 12+)**: The current deployment is the single-process **PC app** (`main_app.py`). Audio flows directly through an in-process `queue.Queue` and the final text reaches the Qt overlay via a queued signal instead of WebSockets + the Chrome extension. The pipeline metrics below are unchanged; only the transport and render stages differ (see the updated stage breakdown in Section 6).
+
 ---
 
 ## 1. Hardware & System Target Profile
@@ -60,6 +62,8 @@ This document provides the final, complete performance report for the **Live Sub
 
 ## 5. Module 10 — Playback Synchronization & Seek Metrics
 
+> **Context**: These figures were measured on the Chrome-extension pipeline. In the current PC app there are no video seek events to consume; instead the **staleness safety net** (`stale_audio_timeout_sec`) guards the overlay: chunks that wait longer than the timeout are dropped and mid-speech ASR state is reset, so the overlay never lags live audio.
+
 | Metric / Parameter | Value | Description |
 |---|---:|---|
 | **Steady-State Core Latency** | **0.71s** | 0.00s overhead during normal continuous playback |
@@ -73,21 +77,21 @@ This document provides the final, complete performance report for the **Live Sub
 ---
 
 ## 6. Final Stage-by-Stage Latency Breakdown (Config H-Vocab)
-| **Audio Capture & WebSockets** | Module 1 | ~42.0 ms | 5.8% | `ScriptProcessorNode` (2048 samples @ 48kHz) + WebSocket transport |
-| **Audio Preprocessing & Resampling** | Module 2 | ~1.5 ms | 0.2% | Int16→Float32, stereo→mono, integer decimation (`[::3]`) 48kHz→16kHz |
+| **Audio Capture** | Module 1 | ~42.0 ms | 5.8% | WASAPI Loopback capture thread (pyaudiowpatch), 48 kHz Int16 PCM |
+| **Audio Preprocessing & Resampling** | Module 2 | ~1.5 ms | 0.2% | Int16→Float32, stereo→mono, polyphase resampling 48kHz→16kHz |
 | **VAD Inference (Silero ONNX)** | Module 2 | ~1.2 ms | 0.2% | ONNX Runtime CPU inference per 32ms frame |
 | **VAD-Adaptive Audio Buffering** | Module 4 | ~480.0 ms | 66.8% | VAD-driven adaptive phrase boundary accumulation (avg chunk 0.48s) |
 | **ASR Inference (`distil-small.en` OpenVINO)** | Module 3 | ~185.0 ms | 25.8% | OpenVINO CPU runtime execution (guided by `initial_prompt` & `hotwords`) |
 | **NLP Post-Processing (Final Segments Only)** | Step 5 | ~3.2 ms | 0.4% | Punctuation/Capitalization restoration + safety/duplicate filters |
-| **IPC & Chrome Message Routing** | Module 1 / 5 | ~3.0 ms | 0.4% | WebSocket send → Extension Service Worker → `tabs.sendMessage` |
-| **Subtitle Overlay DOM Render** | Module 5 | ~2.0 ms | 0.3% | `requestAnimationFrame` bounding rect update + DOM text replacement |
-| **TOTAL END-TO-END LATENCY** | **System** | **~717.9 ms** | **100%** | **Audio Capture → Technical Subtitle Render on Screen** |
+| **In-Process Transport** | Module 12 | ~1.0 ms | 0.1% | `queue.Queue` + queued Qt signal (no WebSocket / no Chrome IPC) |
+| **Subtitle Overlay Render** | Module 12 | ~2.0 ms | 0.3% | Frameless transparent click-through overlay, direct text set |
+| **TOTAL END-TO-END LATENCY** | **System** | **~715.9 ms** | **100%** | **Audio Capture → Technical Subtitle Render on Screen** |
 
-> **Key Takeaway**: VAD-Adaptive Audio Buffering (~480ms) and OpenVINO ASR Inference (~185ms) account for **92.6%** of total latency. Preprocessing, VAD, NLP, IPC, and Rendering together take less than **55ms**.
+> **Key Takeaway**: VAD-Adaptive Audio Buffering (~480ms) and OpenVINO ASR Inference (~185ms) account for **92.6%** of total latency. Preprocessing, VAD, NLP, transport, and Rendering together take less than **55ms**.
 
 ---
 
-## 5. Measured Improvement Summary (Config A Baseline → Config H-Vocab Final)
+## 7. Measured Improvement Summary (Config A Baseline → Config H-Vocab Final)
 
 - **Total End-to-End Latency**: Reduced from **1.39s → 0.71s** (**~48.9% faster**).
 - **Real-Time Factor (RTF)**: Reduced from **0.35 → 0.14** (**>7.1× faster than real-time**).
@@ -97,7 +101,7 @@ This document provides the final, complete performance report for the **Live Sub
 
 ---
 
-## 6. Qualitative Readability & Filtering Verification
+## 8. Qualitative Readability & Filtering Verification
 
 | Spoken Audio Test Phrase | Baseline Output (`tiny` / Raw) | Final System Output (`H-Vocab`) | Action Taken |
 |---|---|---|---|
@@ -113,7 +117,7 @@ This document provides the final, complete performance report for the **Live Sub
 
 ---
 
-## 7. Word Error Rate (WER) Statement
+## 9. Word Error Rate (WER) Statement
 
 > **WER Status**: **WER was not measured because no reference transcript was available.**
 > 

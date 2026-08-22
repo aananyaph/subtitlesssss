@@ -24,6 +24,7 @@ class SpeechSegmenter:
         sample_rate: int = 16000,
         frame_size: int = 512,
         min_chunk_floor_sec: float = 1.0,
+        max_chunk_duration_sec: float = 4.0,
     ):
         self.threshold = threshold
         self.neg_threshold = neg_threshold
@@ -32,10 +33,12 @@ class SpeechSegmenter:
         self.sample_rate = sample_rate
         self.frame_size = frame_size
         self.min_chunk_floor_sec = min_chunk_floor_sec
+        self.max_chunk_duration_sec = max_chunk_duration_sec
 
         self.ms_per_frame = (frame_size / float(sample_rate)) * 1000.0  # ~32ms per 512 samples @ 16kHz
         self.min_speech_frames = int(np.ceil(min_speech_duration_ms / self.ms_per_frame))
         self.min_silence_frames = int(np.ceil(min_silence_duration_ms / self.ms_per_frame))
+        self.max_speech_frames = int(np.ceil(max_chunk_duration_sec * 1000.0 / self.ms_per_frame))
 
         self.state = SpeechState.NON_SPEECH
         self.speech_counter = 0
@@ -79,18 +82,49 @@ class SpeechSegmenter:
         elif self.state == SpeechState.SPEECH:
             self.current_segment_frames.append(frame_audio)
 
-            if is_silence_frame:
+            # ── Max chunk ceiling: force SPEECH_END if duration exceeds limit ──
+            if len(self.current_segment_frames) >= self.max_speech_frames:
+                self.state = SpeechState.NON_SPEECH
+
+                min_floor_samples = int(self.min_chunk_floor_sec * self.sample_rate)
+                segment_pcm = np.concatenate(self.current_segment_frames)
+                if len(segment_pcm) > min_floor_samples:
+                    segment_pcm = segment_pcm[:min_floor_samples]
+
+                duration_s = len(segment_pcm) / float(self.sample_rate)
+                self.total_speech_duration_s += duration_s
+
+                event = {
+                    "type": "SPEECH_END",
+                    "state": self.state.value,
+                    "probability": prob,
+                    "duration_seconds": duration_s,
+                    "audio_pcm": segment_pcm,
+                    "frame_count": len(self.current_segment_frames)
+                }
+
+                self.speech_counter = 0
+                self.silence_counter = 0
+                self.current_segment_frames.clear()
+
+            elif is_silence_frame:
                 self.silence_counter += 1
                 if self.silence_counter >= self.min_silence_frames:
                     # Transition SPEECH -> NON_SPEECH
                     self.state = SpeechState.NON_SPEECH
                     
-                    # Trim trailing silence frames
+                    # Trim trailing silence frames, but retain natural room tone frames up to min_chunk_floor_sec
+                    min_floor_samples = int(self.min_chunk_floor_sec * self.sample_rate)
                     speech_frames_only = self.current_segment_frames[:-self.min_silence_frames]
                     if not speech_frames_only:
                         speech_frames_only = self.current_segment_frames
 
                     segment_pcm = np.concatenate(speech_frames_only) if speech_frames_only else np.empty(0, dtype=np.float32)
+
+                    if len(segment_pcm) < min_floor_samples and self.current_segment_frames:
+                        full_pcm = np.concatenate(self.current_segment_frames)
+                        segment_pcm = full_pcm[:min_floor_samples] if len(full_pcm) > min_floor_samples else full_pcm
+
                     duration_s = len(segment_pcm) / float(self.sample_rate)
                     self.total_speech_duration_s += duration_s
 

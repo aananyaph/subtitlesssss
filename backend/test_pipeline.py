@@ -27,9 +27,11 @@ Tests:
 
 import asyncio
 import json
+import os
 import sys
 import time
 import traceback
+import wave
 
 import numpy as np
 
@@ -52,11 +54,27 @@ TRANSCRIPT_WAIT_SEC = 18.0
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _make_speech_bytes(duration_s: float = 3.0, amplitude: float = 0.5) -> bytes:
-    """Synthetic voiced speech: glottal pulses + formants, stereo Int16 @ 48kHz.
+    """Real TTS speech (preferred) or synthetic voiced audio, stereo Int16 @ 48kHz.
 
-    This is NOT real speech, so Whisper may produce hallucinated/garbage text.
-    The test only checks that *some* transcript is produced, not its content.
+    Uses diag_assets/speech_48k_stereo16.wav (real TTS speech that Whisper can
+    transcribe) when available; falls back to synthetic glottal-pulse audio,
+    which Whisper typically rejects (empty transcript), so tests still pass the
+    'at least one transcript' assertion only when real audio is used.
     """
+    wav_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "diag_assets",
+        "speech_48k_stereo16.wav",
+    )
+    if os.path.exists(wav_path):
+        with wave.open(wav_path, "rb") as w:
+            if w.getframerate() == CHROME_SAMPLE_RATE and w.getnchannels() == CHROME_CHANNELS:
+                frames = w.readframes(w.getnframes())
+                sample_bytes = w.getsampwidth() * CHROME_CHANNELS
+                n_avail = len(frames) // sample_bytes
+                n_needed = int(duration_s * CHROME_SAMPLE_RATE)
+                n = min(n_avail, n_needed)
+                return frames[: n * sample_bytes]
+
     sr = CHROME_SAMPLE_RATE
     n = int(duration_s * sr)
     t = np.linspace(0, duration_s, n, endpoint=False, dtype=np.float32)
@@ -154,6 +172,7 @@ async def _collect(ws, timeout_s: float = TRANSCRIPT_WAIT_SEC) -> list:
                 idle_since = time.monotonic()
             continue
         except Exception:
+            traceback.print_exc()
             break
 
         if isinstance(raw, str):
@@ -315,7 +334,7 @@ async def test_5_backpressure_flood():
             await asyncio.wait_for(pong, timeout=3.0)
             alive = True
         except Exception:
-            pass
+            traceback.print_exc()
 
         await ws.close()
         _pass(f"Server survived flood (alive={alive}, {len(events)} events)") if alive \
@@ -421,14 +440,19 @@ async def run_all():
     # ── 0. Start Server Subprocess ────────────────────────────────────────────
     print("\n[Setup] Starting pipeline_server.py in --vad-bypass mode...")
     server_cmd = [sys.executable, "pipeline_server.py", "--vad-bypass"]
+    server_log_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "_pipeline_server_test.log"
+    )
+    server_log = open(server_log_path, "w", encoding="utf-8")
     try:
         server_process = subprocess.Popen(
             server_cmd,
-            stdout=subprocess.DEVNULL,  # suppress server logs to keep test output clean
-            stderr=subprocess.PIPE,
+            stdout=server_log,      # log to file: a PIPE here fills up and deadlocks the server
+            stderr=subprocess.STDOUT,
             cwd=os.path.dirname(os.path.abspath(__file__)) or "."
         )
     except Exception as exc:
+        server_log.close()
         print(f"ABORTING: Could not start server: {exc}")
         return
 
@@ -446,13 +470,15 @@ async def run_all():
             await asyncio.sleep(0.5)
             # Check if process crashed early
             if server_process.poll() is not None:
-                _, err = server_process.communicate()
-                print(f"\nABORTING: Server crashed on startup.\nSTDERR:\n{err.decode()}")
+                server_log.close()
+                tail = "".join(open(server_log_path, encoding="utf-8", errors="replace").read().splitlines()[-20:])
+                print(f"\nABORTING: Server crashed on startup.\nLOG TAIL:\n{tail}")
                 return
 
     if not server_ready:
         print("\nABORTING: Server did not become ready within 15s.")
         server_process.terminate()
+        server_log.close()
         return
         
     print("        Server ready.")
@@ -473,6 +499,7 @@ async def run_all():
             server_process.wait(timeout=5)
         except subprocess.TimeoutExpired:
             server_process.kill()
+        server_log.close()
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print("\n" + "=" * 70)

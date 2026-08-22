@@ -4,6 +4,7 @@ Tests ASR transcription accuracy, calculates Word Error Rate (WER), measures Rea
 and optionally benchmarks 'tiny' int8 vs 'base' int8 model performance on CPU.
 """
 import time
+import traceback
 import tracemalloc
 import numpy as np
 
@@ -116,6 +117,7 @@ def benchmark_model(model_name: str):
         load_time = time.perf_counter() - t_load_start
     except Exception as e:
         print(f"Model '{model_name}' benchmark skipped (failed to load: {e})")
+        traceback.print_exc()
         tracemalloc.stop()
         return None
 
@@ -148,6 +150,7 @@ def main():
         base_res = benchmark_model("base")
     except Exception as e:
         print(f"Base model comparison skipped: {e}")
+        traceback.print_exc()
 
     # Summary Comparison Matrix
     print("\n==========================================================================")

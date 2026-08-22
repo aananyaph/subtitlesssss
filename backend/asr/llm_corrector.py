@@ -74,7 +74,7 @@ class LLMCorrector:
             logging.warning("[LLM] Disabled: 'llama-cpp-python' package is not installed.")
             self.is_available = False
         except Exception as exc:
-            logging.error(f"[LLM] Disabled: Failed to load model '{self.model_path}': {exc}")
+            logging.error(f"[LLM] Disabled: Failed to load model '{self.model_path}': {exc}", exc_info=True)
             self.is_available = False
 
     def correct(self, text: str, language: str = "en") -> Optional[Dict[str, Any]]:
@@ -130,7 +130,7 @@ class LLMCorrector:
             }
 
         except Exception as exc:
-            logging.warning(f"[LLM Worker] Inference error for '{clean_text}': {exc}")
+            logging.warning(f"[LLM Worker] Inference error for '{clean_text}': {exc}", exc_info=True)
             return None
 
     def validate_output(self, original: str, generated: str) -> Optional[str]:

@@ -10,7 +10,7 @@ import numpy as np
 
 # ── Module 8 Step 6 — Domain Vocabulary & Prompt Tuning Configuration ────────
 DOMAIN_VOCABULARY_ENABLED = True
-INITIAL_PROMPT_ENABLED = True
+INITIAL_PROMPT_ENABLED = False
 HOTWORDS_ENABLED = False  # Disabled on CPU to avoid trie-constrained logit masking overhead
 
 DEFAULT_DOMAIN_HOTWORDS = [
@@ -70,10 +70,14 @@ class FasterWhisperEngine(BaseASREngine):
 
         try:
             from faster_whisper import WhisperModel
+            import os
+            num_threads = min(4, os.cpu_count() or 4)
             self.model = WhisperModel(
                 self.model_size,
                 device=self.device,
-                compute_type=self.compute_type
+                compute_type=self.compute_type,
+                cpu_threads=num_threads,
+                num_workers=1
             )
             self.load_time_s = time.perf_counter() - t0
             print(f"[ASR Engine] Model '{self.model_size}' loaded successfully in {self.load_time_s:.2f} seconds.")
@@ -106,7 +110,7 @@ class FasterWhisperEngine(BaseASREngine):
                 "beam_size": 1,
                 "best_of": 1,
                 "patience": 1.0,
-                "condition_on_previous_text": True,
+                "condition_on_previous_text": False,
                 "vad_filter": False,
                 "word_timestamps": False,
             }
@@ -137,6 +141,7 @@ class FasterWhisperEngine(BaseASREngine):
 
             full_text = " ".join(text_parts).strip()
             elapsed = time.perf_counter() - t0
+            print(f"[TIMER] FasterWhisper ASR Transcribe: {elapsed * 1000.0:.2f} ms")
 
             return {
                 "text": full_text,
@@ -146,7 +151,9 @@ class FasterWhisperEngine(BaseASREngine):
             }
 
         except Exception as e:
+            import traceback
             print(f"[ASR Engine ERROR] Error during transcription: {e}")
+            traceback.print_exc()
             return {
                 "text": "",
                 "segments": [],
@@ -184,14 +191,20 @@ class OpenVINOASREngine(BaseASREngine):
 
         try:
             from faster_whisper import WhisperModel
+            import os
+            num_threads = min(4, os.cpu_count() or 4)
+            # Standardize model size string
+            target_model = self.model_size.replace("distil-whisper/", "")
             self.model = WhisperModel(
-                "distil-small.en",
+                target_model,
                 device=self.device.lower(),
-                compute_type="int8"
+                compute_type="int8",
+                cpu_threads=num_threads,
+                num_workers=1
             )
             self.pipe = None
             self.load_time_s = time.perf_counter() - t0
-            print(f"[OpenVINO ASR Engine] Model loaded successfully in {self.load_time_s:.2f} seconds.")
+            print(f"[OpenVINO ASR Engine] Model '{target_model}' loaded successfully in {self.load_time_s:.2f} seconds.")
         except Exception as e:
             print(f"[OpenVINO ASR Engine ERROR] Failed to load OpenVINO model: {e}")
             raise RuntimeError(f"OpenVINO ASR Model initialization failed: {e}")
@@ -206,6 +219,9 @@ class OpenVINOASREngine(BaseASREngine):
 
         target_lang = language or self.default_language or "en"
         t0 = time.perf_counter()
+
+        # Diagnostic check: Ensure audio array is contiguous float32
+        audio_16k_float32 = np.ascontiguousarray(audio_16k_float32, dtype=np.float32)
 
         initial_prompt = None
         if INITIAL_PROMPT_ENABLED and self.domain_hotwords:
@@ -228,7 +244,7 @@ class OpenVINOASREngine(BaseASREngine):
                         prompt_ids = self.processor.get_prompt_ids(initial_prompt)
                         generate_kwargs["prompt_ids"] = prompt_ids
                     except Exception:
-                        pass
+                        logging.debug("[ASR] Failed to build prompt_ids, continuing without", exc_info=True)
                 res = self.pipe(
                     audio_16k_float32,
                     generate_kwargs=generate_kwargs
@@ -240,7 +256,7 @@ class OpenVINOASREngine(BaseASREngine):
                     "beam_size": 1,
                     "best_of": 1,
                     "patience": 1.0,
-                    "condition_on_previous_text": True,
+                    "condition_on_previous_text": False,
                     "vad_filter": False,
                     "word_timestamps": False
                 }
@@ -259,6 +275,7 @@ class OpenVINOASREngine(BaseASREngine):
                 full_text = " ".join(text_parts).strip()
 
             elapsed = time.perf_counter() - t0
+            print(f"[TIMER] OpenVINO ASR Transcribe: {elapsed * 1000.0:.2f} ms | Model ID: {id(self.model)} | Audio Dtype: {audio_16k_float32.dtype}")
             return {
                 "text": full_text,
                 "segments": [{"start": 0.0, "end": round(len(audio_16k_float32) / 16000.0, 2), "text": full_text}],
@@ -266,7 +283,9 @@ class OpenVINOASREngine(BaseASREngine):
                 "processing_time_s": elapsed
             }
         except Exception as e:
+            import traceback
             print(f"[OpenVINO ASR ERROR] Error during transcription: {e}")
+            traceback.print_exc()
             return {
                 "text": "",
                 "segments": [],

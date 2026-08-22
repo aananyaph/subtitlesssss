@@ -4,6 +4,7 @@ Handles format conversions, stereo-to-mono downmixing, sample rate resampling,
 and frame slicing required for Silero VAD (16kHz mono Float32).
 """
 import numpy as np
+import logging
 
 try:
     from scipy.signal import resample_poly
@@ -78,12 +79,45 @@ class AudioPreprocessor:
         self.input_sample_rate = sample_rate
         self.num_channels = num_channels
 
-    def process_raw_bytes(self, raw_bytes: bytes) -> list[np.ndarray]:
-        """Ingests raw binary Int16 PCM bytes from WebSocket, converts, resamples,
+    def process_raw_bytes(self, raw_bytes: bytes, is_float32: bool = False) -> list[np.ndarray]:
+        """Ingests raw binary Int16 or Float32 PCM bytes, converts, resamples,
         and returns a list of 512-sample (32ms @ 16kHz) Float32 numpy arrays.
         """
-        int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
-        return self.process_int16(int16_arr)
+        if not raw_bytes:
+            return []
+
+        # Auto-detect Float32 vs Int16 PCM format
+        try:
+            try_float32 = np.frombuffer(raw_bytes, dtype=np.float32)
+            max_val = float(np.max(np.abs(try_float32))) if len(try_float32) > 0 else 0.0
+            if is_float32 or (len(try_float32) > 0 and max_val <= 2.0 and not np.isnan(max_val)):
+                float32_arr = try_float32
+            else:
+                int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
+                float32_arr = int16_to_float32(int16_arr)
+        except Exception:
+            logging.debug("[AudioUtils] Float32 PCM parse failed, falling back to Int16", exc_info=True)
+            int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
+            float32_arr = int16_to_float32(int16_arr)
+
+        if self.num_channels == 2:
+            mono_arr = stereo_to_mono(float32_arr)
+        else:
+            mono_arr = float32_arr
+
+        resampled_16k = resample_audio(mono_arr, self.input_sample_rate, self.target_sample_rate)
+
+        # Append resampled audio to internal ring buffer
+        self._buffer = np.concatenate((self._buffer, resampled_16k))
+
+        # Extract all complete 512-sample frames
+        frames = []
+        while len(self._buffer) >= self.frame_size:
+            frame = self._buffer[:self.frame_size]
+            self._buffer = self._buffer[self.frame_size:]
+            frames.append(frame)
+
+        return frames
 
     def process_int16(self, int16_arr: np.ndarray) -> list[np.ndarray]:
         """Ingests Int16 PCM numpy array."""

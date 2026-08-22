@@ -9,6 +9,7 @@ Executes ONLY on FINAL transcript segments. Partial transcripts bypass this laye
 """
 import re
 import time
+import traceback
 from difflib import SequenceMatcher
 from typing import Dict, Optional, Tuple
 
@@ -45,31 +46,35 @@ class SileroPunctuationEngine:
         """Attempts loading Silero Punctuation ONNX/Torch model with safe fallback."""
         try:
             import torch
-            model, _ = torch.hub.load(
+            model, example_texts, languages, punct, apply_te = torch.hub.load(
                 repo_or_dir='snakers4/silero-models',
-                model='silero_punc_cap',
+                model='silero_te',
                 trust_repo=True
             )
             self.model = model
+            self.apply_te = apply_te
+            self.punct = punct
             print("[NLP Engine] Loaded Silero Punctuation & Capitalization model successfully.")
         except Exception as e:
             print(f"[NLP Engine] Silero model PyTorch hub loading note ({e}) — using fast local ONNX/rule-based engine.")
             self.model = None
+            self.apply_te = None
 
-    def restore_punctuation(self, text: str) -> str:
-        """Restores sentence capitalization, proper nouns, and boundary punctuation."""
+def restore_punctuation(self, text: str) -> str:
+        """Restores sentence capitalization, proper nouns, and boundary punctuation using Silero text enhancement model."""
         if not text or not text.strip():
             return ""
 
         raw_text = text.strip()
 
-        # If PyTorch Silero Punctuation model is loaded
-        if self.model is not None:
+        # If PyTorch Silero Punctuation model is loaded and apply_te is available
+        if self.model is not None and self.apply_te is not None:
             try:
-                punctuated = self.model.enhance_text(raw_text, lan='en')
+                punctuated = self.apply_te(raw_text, self.punct)
                 return punctuated
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"[NLP] Silero model error ({exc}), using rule-based fallback")
+                # Fall through to rule-based engine
 
         # Fast rule-based Punctuation & Capitalization Engine
         words = raw_text.split()
@@ -98,7 +103,7 @@ class SileroPunctuationEngine:
         # 3. Restore question mark if starts with interrogative word
         first_word_lower = words[0].lower().strip(",.!?")
         interrogatives = {"what", "why", "how", "when", "where", "who", "which", "is", "are", "can", "could", "would", "do", "does", "did"}
-        
+
         if result[-1] not in ".!?":
             if first_word_lower in interrogatives:
                 result += "?"

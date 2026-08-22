@@ -1,0 +1,241 @@
+
+===== STAGE 1: WASAPI LOOPBACK CAPTURE (standalone) =====
+Default output device: index=12 name=Speakers (AB13X USB Audio)
+--- All WASAPI loopback devices ---
+  [16] Speakers (AB13X USB Audio) [Loopback] | 2ch | 48000.0 Hz
+  [17] Speaker / Headphone (Realtek(R) Audio) [Loopback] | 2ch | 48000.0 Hz
+Loopback index matching default output 'Speakers (AB13X USB Audio)': 16
+02:11:45 [INFO] [Loopback] Initializing WASAPI loopback audio capture...
+Playing 'C:\Users\Sonu\OneDrive\Desktop\New folder\diag_assets\speech_48k_stereo16.wav' through default output device for ~26s...
+02:11:45 [INFO] [Loopback] Captured Device: 'Speakers (AB13X USB Audio) [Loopback]' (Index #16) | Rate: 48000 Hz | Channels: 2
+02:11:45 [INFO] [Loopback] Audio stream active. Polling WASAPI audio buffer...
+02:11:47 [INFO] [Loopback] Audio engine active! Captured 4096 PCM bytes from WASAPI.
+[Meter] t=  2.0s peak=0.2649 (26.5%)
+[Meter] t=  3.0s peak=0.3419 (34.2%)
+[Meter] t=  4.0s peak=0.7505 (75.0%)
+[Meter] t=  5.0s peak=0.2379 (23.8%)
+[Meter] t=  6.0s peak=0.2375 (23.7%)
+[Meter] t=  7.0s peak=0.3334 (33.3%)
+[Meter] t=  8.0s peak=0.3919 (39.2%)
+[Meter] t=  9.0s peak=0.3063 (30.6%)
+[Meter] t= 10.0s peak=0.3965 (39.7%)
+[Meter] t= 11.0s peak=0.2691 (26.9%)
+[Meter] t= 12.0s peak=0.3896 (39.0%)
+[Meter] t= 13.0s peak=0.3250 (32.5%)
+[Meter] t= 14.0s peak=0.3458 (34.6%)
+[Meter] t= 15.0s peak=0.1334 (13.3%)
+[Meter] t= 16.0s peak=0.3802 (38.0%)
+[Meter] t= 17.0s peak=0.3914 (39.1%)
+[Meter] t= 18.0s peak=0.1865 (18.6%)
+[Meter] t= 19.0s peak=0.4464 (44.6%)
+[Meter] t= 20.0s peak=0.3379 (33.8%)
+[Meter] t= 21.0s peak=0.3245 (32.5%)
+[Meter] t= 22.0s peak=0.6136 (61.4%)
+[Meter] t= 23.0s peak=0.1330 (13.3%)
+[Meter] t= 24.0s peak=0.3971 (39.7%)
+[Meter] t= 25.0s peak=0.4740 (47.4%)
+[Meter] t= 26.0s peak=0.2791 (27.9%)
+[Meter] t= 27.0s peak=0.0000 (0.0%)
+[Meter] t= 28.0s peak=0.0000 (0.0%)
+Stage 1 summary: chunks=1179 nonzero_peak_chunks=811 formats={(48000, 2, False)} first_data={'got': True, 'sr': 48000, 'ch': 2, 'bytes': 4096}
+
+===== FULL CHAIN: capture -> VAD -> ASR -> NLP -> overlay =====
+[SileroVAD] Loading ONNX model from: C:\Users\Sonu\OneDrive\Desktop\New folder\backend\vad\silero_vad.onnx
+[SileroVAD Specs] Inputs : [('input', [None, None], 'tensor(float)'), ('state', [2, None, 128], 'tensor(float)'), ('sr', [], 'tensor(int64)')]
+[SileroVAD Specs] Outputs: [('output', [None, 1], 'tensor(float)'), ('stateN', [None, None, None], 'tensor(float)')]
+02:12:19 [INFO] [Pipeline] Loading ASR model 'distil-small.en' (Intel CPU optimized)...
+[OpenVINO ASR Engine] Loading OpenVINO model 'distil-small.en' on CPU...
+02:12:20 [INFO] HTTP Request: GET https://huggingface.co/api/models/Systran/faster-distil-whisper-small.en/revision/main "HTTP/1.1 200 OK"
+[OpenVINO ASR Engine] Model 'distil-small.en' loaded successfully in 2.52 seconds.
+[NLP Engine] Silero model PyTorch hub loading note (No module named 'torch') — using fast local ONNX/rule-based engine.
+02:12:21 [INFO] [Loopback] Initializing WASAPI loopback audio capture...
+02:12:21 [INFO] [Loopback] Captured Device: 'Speakers (AB13X USB Audio) [Loopback]' (Index #16) | Rate: 48000 Hz | Channels: 2
+02:12:21 [INFO] [Pipeline] Single-process PC Application Pipeline Started.
+02:12:21 [INFO] [Loopback] Audio stream active. Polling WASAPI audio buffer...
+Playing speech through speakers for 75s...
+02:12:23 [INFO] [Loopback] Capture stream closed.
+02:12:23 [INFO] [Loopback] Audio engine active! Captured 4096 PCM bytes from WASAPI.
+02:12:23 [INFO] [FORMAT] Capture->Preprocessor: 4096 bytes | sr=48000Hz ch=2 float32=False
+02:12:23 [INFO] [VAD] >>> SPEECH START at t=0.22s (prob=0.994) <<<
+02:12:24 [INFO] [Audio Meter] t=0.99s | Peak: 0.5383 (53.8%) | VAD Prob: 1.000 | State: SPEECH
+02:12:25 [INFO] [Audio Meter] t=1.98s | Peak: 0.2492 (24.9%) | VAD Prob: 1.000 | State: SPEECH
+02:12:26 [INFO] [Audio Meter] t=2.98s | Peak: 0.0003 (0.0%) | VAD Prob: 0.395 | State: SPEECH
+02:12:26 [INFO] [VAD] <<< SPEECH END at t=3.20s | duration=3.17s <<<
+02:12:26 [INFO] [ASR INPUT] calling transcribe: 50688 samples (3.17s) dtype=float32 peak=0.962 start_ts=0.22
+02:12:26 [INFO] Processing audio with duration 00:03.168
+[TIMER] OpenVINO ASR Transcribe: 4074.39 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:30 [INFO] [ASR OUTPUT] text='Welcome to the live subtitle Diagnostic Test.' | ASR: 4074.51 ms | Audio: 3.17s | RTF: 1.286
+[NLP] raw='Welcome to the live subtitle Diagnostic Test.' -> punctuated='Welcome to the live subtitle Diagnostic Test.'
+[NLP] Final transcript processed in 0.14ms.
+02:12:30 [INFO] [SUBTITLE] Final Output: "Welcome to the live subtitle Diagnostic Test." (ASR: 4074.5ms, NLP: 0.1ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Welcome to the live subtitle Diagnostic Test.' is_final=True
+02:12:30 [INFO] [VAD] >>> SPEECH START at t=3.58s (prob=1.000) <<<
+02:12:30 [INFO] [Audio Meter] t=3.97s | Peak: 0.0204 (2.0%) | VAD Prob: 1.000 | State: SPEECH
+02:12:30 [INFO] [Audio Meter] t=4.96s | Peak: 0.4330 (43.3%) | VAD Prob: 1.000 | State: SPEECH
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Welcome to the live subtitle Diagnostic Test.'
+02:12:32 [INFO] [Audio Meter] t=5.95s | Peak: 0.3148 (31.5%) | VAD Prob: 1.000 | State: SPEECH
+02:12:32 [INFO] [VAD] <<< SPEECH END at t=6.46s | duration=3.07s <<<
+02:12:32 [INFO] [ASR INPUT] calling transcribe: 49152 samples (3.07s) dtype=float32 peak=0.899 start_ts=3.58
+02:12:32 [INFO] Processing audio with duration 00:03.072
+[TIMER] OpenVINO ASR Transcribe: 4004.47 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:36 [INFO] [ASR OUTPUT] text='This is a full end-to-end pipeline verification.' | ASR: 4004.61 ms | Audio: 3.07s | RTF: 1.304
+[NLP] raw='This is a full end-to-end pipeline verification.' -> punctuated='This is a full end-to-end pipeline verification.'
+[NLP] Final transcript processed in 0.53ms.
+02:12:36 [INFO] [SUBTITLE] Final Output: "This is a full end-to-end pipeline verification." (ASR: 4004.6ms, NLP: 0.5ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='This is a full end-to-end pipeline verification.' is_final=True
+02:12:36 [INFO] [VAD] >>> SPEECH START at t=6.85s (prob=1.000) <<<
+02:12:36 [INFO] [Audio Meter] t=6.94s | Peak: 0.6133 (61.3%) | VAD Prob: 1.000 | State: SPEECH
+02:12:36 [INFO] [Audio Meter] t=7.94s | Peak: 0.0414 (4.1%) | VAD Prob: 1.000 | State: SPEECH
+02:12:36 [INFO] [VAD] <<< SPEECH END at t=8.26s | duration=1.60s <<<
+02:12:36 [INFO] [ASR INPUT] calling transcribe: 25600 samples (1.60s) dtype=float32 peak=0.755 start_ts=6.85
+02:12:36 [INFO] Processing audio with duration 00:01.600
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='This is a full end-to-end pipeline verification.'
+[TIMER] OpenVINO ASR Transcribe: 3871.15 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:40 [INFO] [ASR OUTPUT] text='The covert the lazy dog' | ASR: 3871.29 ms | Audio: 1.60s | RTF: 2.420
+[NLP] raw='The covert the lazy dog' -> punctuated='The covert the lazy dog.'
+[NLP] Final transcript processed in 0.26ms.
+02:12:40 [INFO] [SUBTITLE] Final Output: "The covert the lazy dog." (ASR: 3871.3ms, NLP: 0.3ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='The covert the lazy dog.' is_final=True
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='The covert the lazy dog.'
+02:12:40 [INFO] [VAD] >>> SPEECH START at t=8.61s (prob=1.000) <<<
+02:12:40 [INFO] [Audio Meter] t=8.93s | Peak: 0.3623 (36.2%) | VAD Prob: 1.000 | State: SPEECH
+02:12:40 [INFO] [Audio Meter] t=9.92s | Peak: 0.0000 (0.0%) | VAD Prob: 0.023 | State: SPEECH
+02:12:40 [INFO] [VAD] <<< SPEECH END at t=9.98s | duration=1.57s <<<
+02:12:40 [INFO] [ASR INPUT] calling transcribe: 25088 samples (1.57s) dtype=float32 peak=0.953 start_ts=8.61
+02:12:40 [INFO] Processing audio with duration 00:01.568
+[TIMER] OpenVINO ASR Transcribe: 3864.58 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:43 [INFO] [ASR OUTPUT] text='Testing 1-2-3' | ASR: 3864.70 ms | Audio: 1.57s | RTF: 2.465
+[NLP] raw='Testing 1-2-3' -> punctuated='Testing 1-2-3.'
+[NLP] Final transcript processed in 0.13ms.
+02:12:43 [INFO] [SUBTITLE] Final Output: "Testing 1-2-3." (ASR: 3864.7ms, NLP: 0.1ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Testing 1-2-3.' is_final=True
+02:12:43 [INFO] [VAD] >>> SPEECH START at t=10.11s (prob=1.000) <<<
+02:12:44 [INFO] [Audio Meter] t=10.91s | Peak: 0.2782 (27.8%) | VAD Prob: 1.000 | State: SPEECH
+02:12:44 [INFO] [Audio Meter] t=11.90s | Peak: 0.1840 (18.4%) | VAD Prob: 1.000 | State: SPEECH
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Testing 1-2-3.'
+02:12:44 [INFO] [VAD] <<< SPEECH END at t=12.54s | duration=2.53s <<<
+02:12:44 [INFO] [ASR INPUT] calling transcribe: 40448 samples (2.53s) dtype=float32 peak=0.859 start_ts=10.11
+02:12:44 [INFO] Processing audio with duration 00:02.528
+[TIMER] OpenVINO ASR Transcribe: 3992.36 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:48 [INFO] [ASR OUTPUT] text='The activity detection should trigger on this speech.' | ASR: 3992.54 ms | Audio: 2.53s | RTF: 1.579
+[NLP] raw='The activity detection should trigger on this speech.' -> punctuated='The activity detection should trigger on this speech.'
+[NLP] Final transcript processed in 0.25ms.
+02:12:48 [INFO] [SUBTITLE] Final Output: "The activity detection should trigger on this speech." (ASR: 3992.5ms, NLP: 0.3ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='The activity detection should trigger on this speech.' is_final=True
+02:12:48 [INFO] [VAD] >>> SPEECH START at t=12.67s (prob=1.000) <<<
+02:12:48 [INFO] [Audio Meter] t=12.90s | Peak: 0.4252 (42.5%) | VAD Prob: 1.000 | State: SPEECH
+02:12:48 [INFO] [Audio Meter] t=13.89s | Peak: 0.5214 (52.1%) | VAD Prob: 1.000 | State: SPEECH
+02:12:48 [INFO] [Audio Meter] t=14.88s | Peak: 0.4022 (40.2%) | VAD Prob: 1.000 | State: SPEECH
+02:12:48 [INFO] [VAD] <<< SPEECH END at t=15.46s | duration=2.88s <<<
+02:12:48 [INFO] [ASR INPUT] calling transcribe: 46080 samples (2.88s) dtype=float32 peak=0.921 start_ts=12.67
+02:12:48 [INFO] Processing audio with duration 00:02.880
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='The activity detection should trigger on this speech.'
+[TIMER] OpenVINO ASR Transcribe: 4804.26 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:53 [INFO] [ASR OUTPUT] text='static speech recognition should convert these words into text.' | ASR: 4804.39 ms | Audio: 2.88s | RTF: 1.668
+[NLP] raw='static speech recognition should convert these words into text.' -> punctuated='Static speech recognition should convert these words into text.'
+[NLP] Final transcript processed in 0.46ms.
+02:12:53 [INFO] [SUBTITLE] Final Output: "Static speech recognition should convert these words into text." (ASR: 4804.4ms, NLP: 0.5ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Static speech recognition should convert these words into te' is_final=True
+02:12:53 [INFO] [VAD] >>> SPEECH START at t=15.58s (prob=1.000) <<<
+02:12:53 [INFO] [Audio Meter] t=15.87s | Peak: 0.4604 (46.0%) | VAD Prob: 1.000 | State: SPEECH
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Static speech recognition should convert these words into te'
+02:12:53 [INFO] [Audio Meter] t=16.86s | Peak: 0.2416 (24.2%) | VAD Prob: 1.000 | State: SPEECH
+02:12:53 [INFO] [VAD] <<< SPEECH END at t=17.66s | duration=2.18s <<<
+02:12:53 [INFO] [ASR INPUT] calling transcribe: 34816 samples (2.18s) dtype=float32 peak=0.954 start_ts=15.58
+02:12:53 [INFO] Processing audio with duration 00:02.176
+[TIMER] OpenVINO ASR Transcribe: 4715.89 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:12:57 [INFO] [ASR OUTPUT] text='should display subtitles on screen.' | ASR: 4716.03 ms | Audio: 2.18s | RTF: 2.167
+[NLP] raw='should display subtitles on screen.' -> punctuated='Should display subtitles on screen.'
+[NLP] Final transcript processed in 0.44ms.
+02:12:57 [INFO] [SUBTITLE] Final Output: "Should display subtitles on screen." (ASR: 4716.0ms, NLP: 0.4ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Should display subtitles on screen.' is_final=True
+02:12:57 [INFO] [Audio Meter] t=17.86s | Peak: 0.9505 (95.1%) | VAD Prob: 1.000 | State: SPEECH
+02:12:57 [INFO] [VAD] >>> SPEECH START at t=17.86s (prob=1.000) <<<
+02:12:57 [INFO] [Audio Meter] t=18.85s | Peak: 0.0138 (1.4%) | VAD Prob: 1.000 | State: SPEECH
+02:12:57 [INFO] [VAD] <<< SPEECH END at t=19.58s | duration=1.89s <<<
+02:12:57 [INFO] [ASR INPUT] calling transcribe: 30208 samples (1.89s) dtype=float32 peak=0.952 start_ts=17.86
+02:12:57 [INFO] Processing audio with duration 00:01.888
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Should display subtitles on screen.'
+[TIMER] OpenVINO ASR Transcribe: 4862.22 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:13:02 [INFO] [ASR OUTPUT] text='Title Diagnostic Test' | ASR: 4862.34 ms | Audio: 1.89s | RTF: 2.575
+[NLP] raw='Title Diagnostic Test' -> punctuated='Title Diagnostic Test.'
+[NLP] Final transcript processed in 0.21ms.
+02:13:02 [INFO] [SUBTITLE] Final Output: "Title Diagnostic Test." (ASR: 4862.3ms, NLP: 0.2ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Title Diagnostic Test.' is_final=True
+02:13:02 [INFO] [VAD] >>> SPEECH START at t=19.71s (prob=1.000) <<<
+02:13:02 [INFO] [Audio Meter] t=19.84s | Peak: 0.0386 (3.9%) | VAD Prob: 1.000 | State: SPEECH
+02:13:02 [INFO] [VAD] <<< SPEECH END at t=20.67s | duration=1.06s <<<
+02:13:02 [INFO] [ASR INPUT] calling transcribe: 16896 samples (1.06s) dtype=float32 peak=0.854 start_ts=19.71
+02:13:02 [INFO] Processing audio with duration 00:01.056
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Title Diagnostic Test.'
+[TIMER] OpenVINO ASR Transcribe: 4689.40 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:13:07 [INFO] [ASR OUTPUT] text='verification.' | ASR: 4689.52 ms | Audio: 1.06s | RTF: 4.441
+[NLP] raw='verification.' -> punctuated='Verification.'
+[NLP] Final transcript processed in 0.15ms.
+02:13:07 [INFO] [SUBTITLE] Final Output: "Verification." (ASR: 4689.5ms, NLP: 0.2ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Verification.' is_final=True
+02:13:07 [INFO] [Audio Meter] t=20.83s | Peak: 0.0000 (0.0%) | VAD Prob: 0.020 | State: NON_SPEECH
+02:13:07 [INFO] [VAD] >>> SPEECH START at t=21.31s (prob=1.000) <<<
+02:13:07 [INFO] [Audio Meter] t=21.82s | Peak: 0.3173 (31.7%) | VAD Prob: 1.000 | State: SPEECH
+02:13:07 [INFO] [Audio Meter] t=22.82s | Peak: 0.7244 (72.4%) | VAD Prob: 1.000 | State: SPEECH
+02:13:07 [INFO] [Audio Meter] t=23.81s | Peak: 0.5694 (56.9%) | VAD Prob: 1.000 | State: SPEECH
+02:13:07 [INFO] [VAD] <<< SPEECH END at t=24.77s | duration=3.65s <<<
+02:13:07 [INFO] [ASR INPUT] calling transcribe: 58368 samples (3.65s) dtype=float32 peak=0.953 start_ts=21.31
+02:13:07 [INFO] Processing audio with duration 00:03.648
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Verification.'
+[TIMER] OpenVINO ASR Transcribe: 4657.70 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:13:12 [INFO] [ASR OUTPUT] text='Testing 1.2.3. Voice activity detection should trigger on this speech.' | ASR: 4657.82 ms | Audio: 3.65s | RTF: 1.277
+[NLP] raw='Testing 1.2.3. Voice activity detection should trigger on this speech.' -> punctuated='Testing 1.2.3. Voice activity detection should trigger on this speech.'
+[NLP] Final transcript processed in 0.25ms.
+02:13:12 [INFO] [SUBTITLE] Final Output: "Testing 1.2.3. Voice activity detection should trigger on this speech." (ASR: 4657.8ms, NLP: 0.3ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Testing 1.2.3. Voice activity detection should trigger on th' is_final=True
+02:13:12 [INFO] [Audio Meter] t=24.80s | Peak: 0.0000 (0.0%) | VAD Prob: 0.038 | State: NON_SPEECH
+02:13:12 [INFO] [VAD] >>> SPEECH START at t=24.96s (prob=0.999) <<<
+02:13:12 [INFO] [Audio Meter] t=25.79s | Peak: 0.3768 (37.7%) | VAD Prob: 1.000 | State: SPEECH
+02:13:12 [INFO] [Audio Meter] t=26.78s | Peak: 0.0949 (9.5%) | VAD Prob: 1.000 | State: SPEECH
+02:13:12 [INFO] [VAD] <<< SPEECH END at t=27.20s | duration=2.40s <<<
+02:13:12 [INFO] [ASR INPUT] calling transcribe: 38400 samples (2.40s) dtype=float32 peak=0.914 start_ts=24.96
+02:13:12 [INFO] Processing audio with duration 00:02.400
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Testing 1.2.3. Voice activity detection should trigger on th'
+[TIMER] OpenVINO ASR Transcribe: 4647.99 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:13:17 [INFO] [ASR OUTPUT] text='Automatic speech recognition should convert these words into text.' | ASR: 4648.12 ms | Audio: 2.40s | RTF: 1.937
+[NLP] raw='Automatic speech recognition should convert these words into text.' -> punctuated='Automatic speech recognition should convert these words into text.'
+[NLP] Final transcript processed in 0.61ms.
+02:13:17 [INFO] [SUBTITLE] Final Output: "Automatic speech recognition should convert these words into text." (ASR: 4648.1ms, NLP: 0.6ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='Automatic speech recognition should convert these words into' is_final=True
+02:13:17 [INFO] [VAD] >>> SPEECH START at t=27.52s (prob=1.000) <<<
+02:13:17 [INFO] [Audio Meter] t=27.78s | Peak: 0.6810 (68.1%) | VAD Prob: 1.000 | State: SPEECH
+02:13:17 [INFO] [Audio Meter] t=28.77s | Peak: 0.3373 (33.7%) | VAD Prob: 1.000 | State: SPEECH
+02:13:17 [INFO] [Audio Meter] t=29.76s | Peak: 0.1115 (11.2%) | VAD Prob: 1.000 | State: SPEECH
+02:13:17 [INFO] [VAD] <<< SPEECH END at t=30.69s | duration=3.36s <<<
+02:13:17 [INFO] [ASR INPUT] calling transcribe: 53760 samples (3.36s) dtype=float32 peak=0.954 start_ts=27.52
+02:13:17 [INFO] Processing audio with duration 00:03.360
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='Automatic speech recognition should convert these words into'
+[TIMER] OpenVINO ASR Transcribe: 4803.86 ms | Model ID: 1983497979280 | Audio Dtype: float32
+02:13:22 [INFO] [ASR OUTPUT] text='The overlay window should display subtitles on screen.' | ASR: 4803.98 ms | Audio: 3.36s | RTF: 1.430
+[NLP] raw='The overlay window should display subtitles on screen.' -> punctuated='The overlay window should display subtitles on screen.'
+[NLP] Final transcript processed in 0.49ms.
+02:13:22 [INFO] [SUBTITLE] Final Output: "The overlay window should display subtitles on screen." (ASR: 4804.0ms, NLP: 0.5ms)
+[OVERLAY] push_live_text called on thread 'PipelineWorker' text='The overlay window should display subtitles on screen.' is_final=True
+02:13:22 [INFO] [Audio Meter] t=30.75s | Peak: 0.0000 (0.0%) | VAD Prob: 0.021 | State: NON_SPEECH
+[OVERLAY] slot on thread 'MainThread' | isVisible=True labelVisible=True geometry=(128,524,1024x160) text='The overlay window should display subtitles on screen.'
+02:13:38 [INFO] [Pipeline] Stopping PC Application Pipeline...
+
+Full-chain summary: unique subtitle lines rendered=12
+  SUBTITLE: 'Welcome to the live subtitle Diagnostic Test.'
+  SUBTITLE: 'This is a full end-to-end pipeline verification.'
+  SUBTITLE: 'The covert the lazy dog.'
+  SUBTITLE: 'Testing 1-2-3.'
+  SUBTITLE: 'The activity detection should trigger on this speech.'
+  SUBTITLE: 'Static speech recognition should convert these words into text.'
+  SUBTITLE: 'Should display subtitles on screen.'
+  SUBTITLE: 'Title Diagnostic Test.'
+  SUBTITLE: 'Verification.'
+  SUBTITLE: 'Testing 1.2.3. Voice activity detection should trigger on this speech.'
+  SUBTITLE: 'Automatic speech recognition should convert these words into text.'
+  SUBTITLE: 'The overlay window should display subtitles on screen.'
+final label text: 'The overlay window should display subtitles on screen.'
+
+===== FULL-CHAIN DIAGNOSTIC RESULTS =====
+Stage1_capture | PASS | nonzero_chunks=811/1179, default_output_loopback_idx=16, formats={(48000, 2, False)}
+Full_chain     | PASS | unique rendered subtitles=12

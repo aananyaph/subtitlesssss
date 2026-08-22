@@ -157,6 +157,16 @@ VAD_BYPASS_SILENCE_RMS = 0.005   # Frames below this RMS are silence even in byp
 # LOGGING SETUP
 # =============================================================================
 
+# Force UTF-8 on stdout/stderr so box-drawing/emoji prints never crash on
+# cp1252 Windows consoles (e.g. plain `python pipeline_server.py` from cmd).
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if _reconfigure is not None:
+        try:
+            _reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -295,7 +305,7 @@ class PipelineMetrics:
                     memory_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
                     cpu_pct = round(proc.cpu_percent(interval=None), 1)
                 except Exception:
-                    pass
+                    logging.warning("[Snapshot] psutil read failed", exc_info=True)
 
             asr_stat = self._stats(self.asr_times_ms)
             rtf_stat = self._stats(self.rtf_values)
@@ -542,7 +552,7 @@ class PipelineSession:
                         self.transcript_queue.put_nowait, ack_event
                     )
                 except Exception as exc:
-                    logging.warning(f"[FLUSH] Failed to send flush_ack: {exc}")
+                    logging.warning(f"[FLUSH] Failed to send flush_ack: {exc}", exc_info=True)
 
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -568,7 +578,7 @@ class PipelineSession:
         try:
             frames = self.preprocessor.process_raw_bytes(raw_bytes)
         except Exception as exc:
-            logging.warning(f"[AudioProducer] Preprocessing error: {exc}")
+            logging.warning(f"[AudioProducer] Preprocessing error: {exc}", exc_info=True)
             return
 
         if not frames:
@@ -668,7 +678,7 @@ class PipelineSession:
                             prob = 0.70
                     event = self.segmenter.process_frame(frame, prob)
                 except Exception as exc:
-                    logging.error(f"[VAD Worker] VAD error frame #{frame_idx}: {exc}")
+                    logging.error(f"[VAD Worker] VAD error frame #{frame_idx}: {exc}", exc_info=True)
                     continue
                 self.metrics.on_vad_frame((time.perf_counter() - t_vad) * 1000.0)
 
@@ -717,26 +727,17 @@ class PipelineSession:
                         self.metrics.on_speech_segment()
 
                 elif ev_type == "SPEECH_END":
-                    end_pcm = event.get("audio_pcm")
-                    if end_pcm is None or len(end_pcm) == 0:
-                        end_pcm = (
-                            np.concatenate(speech_frames)
-                            if speech_frames
-                            else np.empty(0, dtype=np.float32)
-                        )
+                    end_pcm = (
+                        np.concatenate(speech_frames)
+                        if speech_frames
+                        else event.get("audio_pcm", np.empty(0, dtype=np.float32))
+                    )
 
                     duration_s = len(end_pcm) / float(VAD_SAMPLE_RATE)
                     logging.info(f"[VAD] <<< SPEECH END (VAD Adaptive boundary) | duration={duration_s:.2f}s <<<")
 
                     if len(end_pcm) >= MIN_SPEECH_SAMPLES_FOR_ASR:
-                        # Module 11: Pad audio to minimum chunk floor (e.g., 1.0s / 1.5s)
-                        # to provide Whisper with sufficient acoustic context for phrase coherence
-                        min_samples = int(self.min_chunk_floor_sec * VAD_SAMPLE_RATE)
-                        if len(end_pcm) < min_samples:
-                            pad_len = min_samples - len(end_pcm)
-                            end_pcm = np.pad(end_pcm, (0, pad_len), mode='constant')
-                            duration_s = len(end_pcm) / float(VAD_SAMPLE_RATE)
-                            logging.info(f"[VAD] Padded short segment from {len(end_pcm)-pad_len} to {len(end_pcm)} samples ({duration_s:.2f}s floor).")
+                        duration_s = len(end_pcm) / float(VAD_SAMPLE_RATE)
 
                         self._enqueue_speech({
                             "type": "speech_end",
@@ -769,21 +770,23 @@ class PipelineSession:
             logging.info(f"[VAD Worker] Stopped. Processed {frame_idx} VAD frames.")
 
     def _enqueue_speech(self, segment: dict):
-        """Puts a speech segment dict into speech_queue with drop-oldest backpressure."""
+        """Puts a speech segment dict into speech_queue with smart backpressure."""
+        seg_type = segment.get("type", "")
+        
+        # If speech_queue has pending items, drop intermediate streaming partials to preserve ASR capacity for speech_end
+        if seg_type == "streaming_chunk" and not self.speech_queue.empty():
+            return
+
         if self.speech_queue.full():
             try:
                 self.speech_queue.get_nowait()
-                logging.warning(
-                    f"[Backpressure] speech_queue full ({SPEECH_QUEUE_MAXSIZE}) — "
-                    f"dropped oldest segment to make room."
-                )
             except queue.Empty:
                 pass
 
         try:
             self.speech_queue.put_nowait(segment)
         except queue.Full:
-            logging.warning("[Backpressure] speech_queue still full — speech segment dropped.")
+            pass
 
     # ─────────────────────────────────────────────────────────────────────────
     # ASR WORKER THREAD
@@ -901,6 +904,12 @@ class PipelineSession:
                 self.metrics.on_asr_run(asr_ms, audio_dur_s)
                 rtf = (asr_ms / 1000.0) / audio_dur_s if audio_dur_s > 0 else 0.0
 
+                # [TEMP LATENCY TIMER] Log ASR Model Inference Latency
+                logging.info(
+                    f"[TIMER] ASR Model Inference: {asr_ms:.2f} ms | "
+                    f"Audio Duration: {audio_dur_s:.2f}s | RTF: {rtf:.3f}"
+                )
+
                 # ── Send transcript events to Chrome (via asyncio queue) ───────
                 for ev in events:
                     nlp_ms = 0.0
@@ -908,11 +917,20 @@ class PipelineSession:
                     # Step 5: Process ONLY final transcript segments through NLP Post-Processor
                     if ev.get("type") == "final":
                         no_speech_prob = segment.get("no_speech_prob", 0.0)
+                        t_nlp_start = time.perf_counter()
                         nlp_res = self.nlp_processor.process_final_transcript(
                             text=ev.get("text", ""),
                             language=ev.get("language", "en"),
                             no_speech_prob=no_speech_prob
                         )
+                        nlp_ms = (time.perf_counter() - t_nlp_start) * 1000.0
+                        
+                        # [TEMP LATENCY TIMER] Log NLP Post-Processing Latency
+                        logging.info(
+                            f"[TIMER] NLP Post-Processing: {nlp_ms:.2f} ms | "
+                            f"Suppressed: {nlp_res['suppressed']} (reason: {nlp_res.get('reason')})"
+                        )
+
                         if nlp_res["suppressed"]:
                             logging.info(f"[NLP Filter] Suppressed final segment: reason='{nlp_res['reason']}'")
                             continue
@@ -956,15 +974,20 @@ class PipelineSession:
 
 
                     e2e_ms = (time.perf_counter() - received_at) * 1000.0
+                    vad_buf_ms = max(0.0, (segment.get("vad_at", received_at) - received_at) * 1000.0)
+                    vad_proc_ms = max(0.0, (t_asr - segment.get("vad_at", received_at)) * 1000.0)
+                    
                     self.metrics.on_transcript_sent(e2e_ms)
 
-                    snap = self.metrics.snapshot()
-                    logging.info(
-                        f"[PERF] timestamp={time.time():.3f} audio_duration={audio_dur_s:.2f} "
-                        f"vad_ms={snap['vad_ms']['avg']:.1f} asr_ms={asr_ms:.1f} nlp_ms={nlp_ms:.1f} e2e_ms={e2e_ms:.1f} "
-                        f"rtf={rtf:.2f} audio_queue={self.audio_queue.qsize()} "
-                        f"speech_queue={self.speech_queue.qsize()} cpu={snap['cpu_pct']:.1f} memory_mb={snap['memory_mb']:.1f}"
-                    )
+                    # Print step-by-step timing breakdown
+                    print("\n" + "─" * 70)
+                    print(f"[TIMING] STEP-BY-STEP BREAKDOWN | Type: {ev.get('type','').upper()} | Text: \"{ev.get('text','')}\"")
+                    print(f"  ├─ Step 1: Audio Capture & Buffering  : {vad_buf_ms:7.1f} ms")
+                    print(f"  ├─ Step 2: VAD & Phrase Segmentation  : {vad_proc_ms:7.1f} ms")
+                    print(f"  ├─ Step 3: ASR Inference (Whisper)   : {asr_ms:7.1f} ms  (Audio: {audio_dur_s:.2f}s | RTF: {rtf:.2f})")
+                    print(f"  ├─ Step 4: NLP Quality & Safety      : {nlp_ms:7.1f} ms")
+                    print(f"  [TIMING] TOTAL END-TO-END LATENCY        : {e2e_ms:7.1f} ms ({e2e_ms/1000.0:.2f}s)")
+                    print("─" * 70 + "\n")
 
                     # Attach stage timestamps and pipeline metrics for diagnostics
                     now_wall = time.time()
@@ -992,7 +1015,7 @@ class PipelineSession:
                     except asyncio.QueueFull:
                         logging.warning("[Backpressure] transcript_queue full — dropping event.")
                     except Exception as exc:
-                        logging.warning(f"[ASR Worker] Failed to enqueue transcript: {exc}")
+                        logging.warning(f"[ASR Worker] Failed to enqueue transcript: {exc}", exc_info=True)
 
         except Exception as exc:
             logging.error(f"[ASR Worker] Fatal error: {exc}", exc_info=True)
@@ -1065,10 +1088,10 @@ class PipelineSession:
                             self.transcript_queue.put_nowait, corr_event
                         )
                     except Exception as exc:
-                        logging.warning(f"[LLM Worker] Failed to enqueue correction event: {exc}")
-                else:
-                    self.metrics.on_correction_rejected()
-                    logging.debug(f"[LLM Worker] [{segment_id}] Skipped or rejected correction for '{text}'.")
+                        logging.warning(f"[LLM Worker] Failed to enqueue correction event: {exc}", exc_info=True)
+                    else:
+                        self.metrics.on_correction_rejected()
+                        logging.debug(f"[LLM Worker] [{segment_id}] Skipped or rejected correction for '{text}'.")
 
         except Exception as exc:
             logging.error(f"[LLM Worker] Fatal error: {exc}", exc_info=True)
@@ -1109,7 +1132,7 @@ class PipelineSession:
                     logging.warning("[Transcript Sender] WebSocket closed mid-send.")
                     break
                 except Exception as exc:
-                    logging.error(f"[Transcript Sender] Send error: {exc}")
+                    logging.error(f"[Transcript Sender] Send error: {exc}", exc_info=True)
 
         except asyncio.CancelledError:
             logging.info("[Transcript Sender] Task cancelled.")
@@ -1308,6 +1331,11 @@ def _parse_args():
         help="Minimum chunk duration floor in seconds (1.0, 1.5, or 2.0). Default: 1.0s",
     )
     parser.add_argument(
+        "--model",
+        default="tiny.en",
+        help="ASR model size ('tiny.en', 'distil-small.en', 'small.en'). Default: tiny.en",
+    )
+    parser.add_argument(
         "--host", default=HOST, help=f"Bind host (default: {HOST})"
     )
 
@@ -1325,21 +1353,23 @@ async def main():
     enable_llm = args.enable_llm
     llm_model_path = args.llm_model
     min_chunk_floor = args.min_chunk_floor
+    model_name = args.model
 
     logging.info("=" * 70)
     logging.info("Module 4/9/11 — Real-Time Pipeline Server")
     if vad_bypass:
         logging.warning("VAD BYPASS MODE ACTIVE")
+    logging.info(f"ASR Model           : {model_name}")
     logging.info(f"Minimum Chunk Floor : {min_chunk_floor:.1f}s")
     logging.info(f"Async LLM Correction: {'ENABLED' if enable_llm else 'DISABLED'}")
     if enable_llm:
         logging.info(f"LLM Model Path      : {llm_model_path or 'Not specified'}")
     logging.info("=" * 70)
 
-    # Load OpenVINO distil-whisper model (Config E) — Intel CPU optimized
-    logging.info("Loading OpenVINO distil-whisper model (one-time, Intel CPU optimized)...")
+    # Load ASR model — Intel CPU optimized with multithreading
+    logging.info(f"Loading ASR model '{model_name}' (one-time, Intel CPU optimized)...")
     asr_engine = OpenVINOASREngine(
-        model_size="distil-whisper/distil-small.en",
+        model_size=model_name,
         device="CPU",
         language="en",
     )
