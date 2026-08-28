@@ -14,6 +14,11 @@ ENV/
 selftest.wav
 capture.wav
 
+# Runtime logs
+*.log
+app_log.txt
+log.txt
+
 # IDE / OS files
 .vscode/
 .idea/

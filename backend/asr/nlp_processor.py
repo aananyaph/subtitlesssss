@@ -222,7 +222,40 @@ class NLPPostProcessor:
         # ── 4. Punctuation & Capitalization Restoration ──────────────────────
         punctuated_text = raw_text
         if self.punctuation_enabled and self.punctuation_engine:
-            punctuated_text = self.punctuation_engine.restore_punctuation(raw_text)
+            punctuated_text = raw_text
+            # Rule-based restoration using proper_noun_map (chosen over Silero
+            # due to capitalization breakage issues).
+            words = raw_text.split()
+            if words:
+                cleaned_words = []
+                for w in words:
+                    clean_word = w.lower().strip(",.!?")
+                    if clean_word in self.punctuation_engine.proper_noun_map:
+                        mapped = self.punctuation_engine.proper_noun_map[clean_word]
+                        # Preserve existing trailing punctuation
+                        if w[-1] in ",.!?":
+                            mapped += w[-1]
+                        cleaned_words.append(mapped)
+                    else:
+                        cleaned_words.append(w)
+                if cleaned_words:
+                    cleaned_words[0] = cleaned_words[0].capitalize()
+                first_word_lower = words[0].lower().strip(",.!?")
+                interrogatives = {
+                    "what", "why", "how", "when", "where", "who", "which",
+                    "is", "are", "can", "could", "would", "do", "does", "did",
+                }
+# Check the last character of the JOINED string, not the last word as a whole
+                joined = " ".join(cleaned_words)
+                if joined and joined[-1] not in ".!?":
+                    if first_word_lower in interrogatives:
+                        punctuated_text = joined + "?"
+                    else:
+                        punctuated_text = joined + "."
+                else:
+                    punctuated_text = joined
+            else:
+                punctuated_text = raw_text
             print(f"[NLP] raw='{raw_text}' -> punctuated='{punctuated_text}'")
 
         nlp_latency = (time.perf_counter() - t0) * 1000.0

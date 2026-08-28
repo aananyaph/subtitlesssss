@@ -1,138 +1,118 @@
-# Module 9 Step 1 Implementation Plan — Async LLM Post-Correction
+# Module 9 Step 3 Implementation Plan — LLM Post-Correction in main_app.py
 
-This plan details the technical architecture and implementation for **Module 9 Step 1: Async LLM Post-Correction**.
-
----
-
-## 1. Architecture Overview
-
-```
-                      Fast Path (Instant - Sub-second ~0.71s)
-   ASR → NLP Post-Processor → FINAL Event ───► Chrome Overlay (Initial Display)
-                                │
-                                ▼ (if ASYNC_LLM_CORRECTION_ENABLED=true)
-                        Correction Queue (bounded maxsize=3, drop-oldest)
-                                │
-                                ▼
-                       LLM Worker Thread (dedicated Python daemon thread)
-                                │
-                                ▼
-                       llama-cpp-python GGUF Model (loaded ONCE at startup)
-                                │
-                                ▼
-                     Output Validation & Prompt Filtering
-                                │
-                                ▼ (if valid & segment_id matches current visible text)
-                        Corrected Event ───► Chrome Overlay Text Replacement
-```
+This plan details the implementation for **Module 9 Step 3: LLM Post-Correction integrated directly in main_app.py**.
 
 ---
 
-## 2. Key Technical Guarantees
+## 1. Overview
 
-1. **Non-Blocking Real-Time Critical Path**:
-   - Audio capture, VAD, ASR, NLP post-processing, and initial WebSocket transmission are untouched.
-   - Initial subtitles appear immediately (~0.71s end-to-end latency).
-2. **Stable Segment Identity (`segment_001`, `segment_002`, ...)**:
-   - Every `final` transcript event is assigned a monotonically increasing ID (`segment_001`, `segment_002`, etc.).
-   - Overlay tracks `currentlyDisplayedSegmentId`.
-   - Async corrections verify `correction.segment_id === currentlyDisplayedSegmentId` before replacing visible text. Stale corrections for past segments are discarded safely.
-3. **Bounded Correction Queue**:
-   - `MAX_CORRECTION_QUEUE = 3`.
-   - Drop-oldest strategy prevents ASR backpressure or memory accumulation if LLM inference is slower than speech.
-4. **Local llama-cpp-python Engine**:
-   - Loaded ONCE on worker initialization.
-   - Configurable GGUF model path via `LLM_MODEL_PATH` or `--llm-model` argument.
-   - Evaluates small quantized GGUF candidate (e.g., `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf`).
-5. **Feature Flag (`ASYNC_LLM_CORRECTION_ENABLED`)**:
-   - Defaults to `false`. When false, system operates identically to Module 8 H-Vocab baseline.
-6. **Fail-Safe Operation**:
-   - If `llama-cpp-python` is not installed or model loading fails, correction layer logs error and disables itself while core subtitle system continues seamlessly.
+Step 3 adds local LLM post-correction to the main desktop application (`main_app.py`). The correction logic is embedded inline rather than running in a separate background thread with queue infrastructure. This simplifies the architecture while retaining the core validation benefits.
+
+**Key design choices:**
+- `LLMCorrector` class (with `correct()` and `validate_output()`) is ported from the previous `backend/asr/llm_corrector.py` — deleted as part of the old architecture cleanup.
+- Correction is triggered on-demand (e.g., user-initiated, timer-based, or after initial caption stabilization), not as a persistent daemon thread.
+- The initial subtitle pipeline (ASR → NLP → WebSocket) remains **completely untouched** — no background threads, no bounded queues, no backpressure concerns.
+- Feature flag `ASYNC_LLM_CORRECTION_ENABLED` defaults to `false`; when enabled, correction runs after the initial caption is displayed, replacing text smoothly without delaying startup.
 
 ---
 
-## 3. User Review Required
+## 2. Technical Guarantees
 
-> [!IMPORTANT]
-> **LLM Engine & GGUF Model**:
-> The correction layer uses `llama-cpp-python` with a CPU-only quantized GGUF model (e.g. `Qwen2.5-0.5B-Instruct-Q4_K_M.gguf` ~350 MB or `Qwen2.5-1.5B-Instruct-Q4_K_M.gguf` ~1.1 GB).
-> Feature flag `ASYNC_LLM_CORRECTION_ENABLED` defaults to `false`. When disabled or model file missing, the system functions normally as H-Vocab.
+1. **Initial subtitle pipeline untouched** — ASR → NLP → WebSocket latency unchanged (~0.71s end-to-end). No background thread introduces jitter or blocking.
+2. **`OpenVINO`, `distil-whisper`, `RTF`, `ASR`, `VAD`, `CPU`, `GPU` all staying untouched** — Step 3 adds correction as a post-processing overlay, not a pipeline modifier.
+3. **Feature flag gated** — `ASYNC_LLM_CORRECTION_ENABLED` defaults to `false`. When disabled, the system operates identically to the Module 8 H-Vocab baseline.
+4. **Fail-safe operation** — If the GGUF model fails to load or `llama-cpp-python` is unavailable, correction silently skips; core subtitle system continues seamlessly.
+5. **Technical-term protection preserved** — `validate_output()` rejection rules (empty, conversational prefixes, markdown, excessive length) remain in effect. The `proper_noun_map` capitalization from the Silero NLP engine continues to guard OpenVINO, faster-whisper, CTranslate2, etc.
+
+---
+
+## 3. User Stories
+
+- **As a user**, I want subtitles to appear immediately without waiting for LLM correction.
+- **As a user**, I want obviously wrong ASR words (e.g., "openvino" → "OpenVINO") to be corrected after the initial display.
+- **As a user**, I want the correction to be safe — no hallucinated content, no markdown, no conversational intros.
+- **As a user**, when correction is disabled or the model is missing, nothing breaks — subtitles work as before.
 
 ---
 
 ## 4. Proposed Changes
 
-### Backend Component
+### main_app.py
 
-#### [NEW] [llm_corrector.py](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/backend/asr/llm_corrector.py)
-- Implements `LLMCorrector` using `llama-cpp-python`.
-- Handles lazy/one-time loading of GGUF model from `LLM_MODEL_PATH`.
-- Builds deterministic correction prompt:
-  ```
-  You are correcting an automatic speech recognition subtitle.
-  Fix only:
-  - obvious spelling errors
-  - obvious ASR word errors
-  - grammar errors
-  - punctuation
-  Preserve the exact meaning. Do not add information. Do not summarize. Do not explain. Return ONLY the corrected subtitle.
-  Subtitle: {text}
-  ```
-- Implements output validator:
-  - Rejects empty strings.
-  - Rejects text > 2.0× original length.
-  - Rejects output containing explanations, markdown, or intros ("Here is...", "Corrected:").
-  - Rejects text introducing unmentioned facts.
+#### Port `LLMCorrector` class
 
-#### [MODIFY] [pipeline_server.py](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/backend/pipeline_server.py)
-- Adds constants: `MAX_CORRECTION_QUEUE = 3`, `ASYNC_LLM_CORRECTION_ENABLED` (via `--enable-llm` flag / env var).
-- Adds `segment_counter` to `PipelineSession` to assign monotonically increasing IDs (`segment_001`, `segment_002`, ...).
-- In `_asr_worker`:
-  - Attaches `segment_id` to `final` events.
-  - Non-blockingly enqueues `final` payload copy into `correction_queue` (dropping oldest if full).
-- Implements `_llm_worker`:
-  - Drains `correction_queue`.
-  - Runs `llm_corrector.correct()`.
-  - Measures `llm_inference_ms` and `correction_turnaround_ms`.
-  - Sends `{"type": "correction", "segment_id": id, "text": corrected_text, ...}` to WebSocket via `transcript_queue`.
+Include the `LLMCorrector` class with two methods:
 
-### Chrome Extension Component
+- `correct(text, language="en")` — runs LLM inference, validates output via `validate_output()`, returns `{"corrected_text": str, "inference_ms": float}` or `None`.
+- `validate_output(original, generated)` — 5 rejection rules:
+  - Empty output → `None`
+  - Conversational prefixes ("Here is", "Sure", "Note:") → `None`
+  - Markdown (` ``` `, backticks, `##`) → `None`
+  - Excessive length (>2x original + 20 chars) → `None`
+  - Identical to original → `None` (returns `None`, no update needed)
 
-#### [MODIFY] [offscreen.js](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/live-subtitle-extension/offscreen/offscreen.js)
-- Updates WebSocket listener to process `data.type === 'correction'` alongside `partial` and `final`.
+- Add `ASYNC_LLM_CORRECTION_ENABLED = False` feature flag.
+- Add `LLM_MODEL_PATH` environment variable support (optional; if not set or model missing, correction silently disables).
 
-#### [MODIFY] [overlay.js](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/live-subtitle-extension/content/overlay.js)
-- Tracks `currentlyDisplayedSegmentId`.
-- On `final`/`partial` event, updates `currentlyDisplayedSegmentId = transcript.segment_id`.
-- On `correction` event, checks `if (transcript.segment_id === currentlyDisplayedSegmentId)`:
-  - If match: updates text element content smoothly and resets auto-hide timer.
-  - If mismatch: logs debug and discards stale correction.
+#### Correction trigger flow
 
-### Documentation & Benchmarking
+1. Initial ASR caption is captured and sent to Chrome **immediately** (no blocking).
+2. After a short stabilization delay (e.g., 1–2s), or on user-trigger (menu command keyboard shortcut), call `llm_corrector.corrected_text(text)`.
+3. If a corrected text is returned, send a correction event to Chrome overlay to replace the initial caption.
+4. If `None` is returned (model unavailable, validation rejection, or no change needed), no event is sent; the initial caption remains.
 
-#### [NEW] [async_llm_correction.md](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/docs/async_llm_correction.md)
-- Documents Module 9 architecture, GGUF model details, prompt design, validation rules, queue safety, and failure modes.
+#### Example code structure in main_app.py
 
-#### [MODIFY] [benchmark_report.md](file:///c:/Users/Sonu/OneDrive/Desktop/New%20folder/benchmark_report.md)
-- Adds Module 9 benchmark comparisons (H-Vocab vs H-Vocab + Async LLM).
+```python
+class main_app:
+    def __init__(self):
+        self.llm_corrector = LLMCorrector(enabled=ASYNC_LLM_CORRECTION_ENABLED,
+                                          model_path=os.environ.get("LLM_MODEL_PATH", ""))
+        self.llm_enabled = ASYNC_LLM_CORRECTION_ENABLED
+
+    def on_caption_ready(self, raw_text):
+        """Called when ASR produces a new final caption."""
+        # Immediately dispatch the raw caption (unchanged pipeline)
+        self.send_to_chrome(raw_text)
+
+        # Schedule correction after stabilization (non-blocking, no delay to initial display)
+        threading.Timer(2.0, self._correct_and_replace, [raw_text]).start()
+
+    def _correct_and_replace(self, raw_text):
+        if not self.llm_enabled:
+            return
+        res = self.llm_corrector.correct(raw_text)
+        if res and res.get("corrected_text"):
+            self.send_to_chrome(res["corrected_text"], is_correction=True)
+        # If None, initial caption stays — no error, no jitter
+```
 
 ---
 
 ## 5. Verification & Test Plan
 
-### Automated & Unit Tests
-1. **Segment Identity Test**: Verify sequential `segment_001`, `segment_002` IDs generated on `final` events.
-2. **Queue Safety Test**: Simulate slow LLM execution; verify `correction_queue` drops oldest items without stalling ASR or accumulating VAD/audio buffers.
-3. **Output Validation Test**: Test 5+ sample sentences (e.g., "Open vino optimizes inference.", "today we're learning javascript") and invalid inputs (explanations, added info) to ensure correct filtering.
-4. **Failure Handling Test**: Simulate missing model file, worker exception, or queue overflow; verify core ASR path continues unaffected.
-5. **Stale Protection Test**: Simulate out-of-order correction delivery; verify older segment correction is ignored when newer segment is displayed.
+### Automated tests (to be added to main_app.py test suite)
+
+1. **Initial caption latency** — Verify raw caption appears at ~0.71s end-to-end with no correction thread blocking.
+2. **Correction on-demand** — After the stabilization timer fires, verify `correct()` returns validated text for test sentences (e.g., "openvino optimizes inference" → "OpenVINO optimizes inference.").
+3. **Validation rejection** — Verify `validate_output()` rejects: conversational intros, markdown, excessive length, empty output.
+4. **Feature flag disabled** — With `ASYNC_LLM_CORRECTION_ENABLED=false`, confirm no correction timer is scheduled and the pipeline runs identically to Module 8.
+5. **Model missing** — With no `LLM_MODEL_PATH` set, confirm `correct()` returns `None` and no errors propagate to the ASR pipeline.
+
+### Manual validation
+
+- Run the OpenVINO technical-term protection test (from the earlier single-consistent test) to verify `OpenVINO` stays capitalized through the new correction flow.
+- Test with "openvino" in middle of sentence (proper_noun_map capitalization), at sentence start (capitalization edge case), and with conversational prefixes (LLM validation rejection).
 
 ---
 
 ## 6. Execution Plan
 
-1. Create `backend/asr/llm_corrector.py` with `llama-cpp-python` engine and validation logic.
-2. Update `backend/pipeline_server.py` with segment IDs, queue management, and `_llm_worker` thread.
-3. Update `live-subtitle-extension/offscreen/offscreen.js` and `live-subtitle-extension/content/overlay.js`.
-4. Create test suite in `backend/test_llm_correction.py` to verify prompt validation, queue safety, and failure modes.
-5. Benchmark and document results in `docs/async_llm_correction.md` and `benchmark_report.md`.
+1. **Port `LLMCorrector`** — Copy `correct()` and `validate_output()` from the deleted `backend/asr/llm_corrector.py` into `main_app.py`. Remove any dependency on `backend/asr/` packages. Add feature flag and model-path config.
+2. **Add correction trigger** — Implement the stabilization-timer + on-demand correction flow in `main_app.py` as described above. Do NOT add a background daemon thread or `correction_queue`.
+3. **Update main_app.py entry point** — Ensure `ASYNC_LLM_CORRECTION_ENABLED` env var / flag is respected at startup.
+4. **Run verification tests** — Execute the test plan above. Confirm OpenVINO protection, RTF/ASR/VAD/CPU/GPU untouched, feature flag gating.
+5. **Benchmark** — Measure that initial caption latency is unchanged with the feature on vs off.
+6. **Delete old artifacts** — `backend/pipeline_server.py`, `backend/asr/llm_corrector.py`, `backend/test_llm_correction.py`, `docs/async_llm_correction.md` are already removed (see git history). No background LLM worker architecture in this Step.
+
+---
