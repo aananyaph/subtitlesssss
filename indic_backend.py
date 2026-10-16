@@ -136,7 +136,7 @@ def _vad_chunks(audio):
 # --------------------------------------------------------------------------
 # Transcription
 # --------------------------------------------------------------------------
-def transcribe_indic(source, language="kn", decoding="ctc"):
+def transcribe_indic(source, language="kn", decoding="ctc", progress_callback=None):
     """Transcribe with IndicConformer. Returns the standard segments dict."""
     if decoding not in ("ctc", "rnnt"):
         raise ValueError("decoding must be 'ctc' or 'rnnt'")
@@ -153,7 +153,8 @@ def transcribe_indic(source, language="kn", decoding="ctc"):
 
     model = load_indic_model()
     segments = []
-    for start, end in chunks:
+    total_chunks = len(chunks)
+    for idx, (start, end) in enumerate(chunks, 1):
         wav = torch.from_numpy(audio[start:end]).unsqueeze(0)
         try:
             with torch.no_grad():
@@ -173,5 +174,7 @@ def transcribe_indic(source, language="kn", decoding="ctc"):
                     "text": text,
                 }
             )
+        if progress_callback is not None:
+            progress_callback(float(idx) / float(total_chunks))
 
     return {"language": language, "segments": segments}

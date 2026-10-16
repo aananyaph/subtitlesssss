@@ -147,7 +147,9 @@ def detect_language(audio_sample, model_size="tiny", device="cpu"):
 # --------------------------------------------------------------------------
 # Transcription
 # --------------------------------------------------------------------------
-def _transcribe_whisper(source, language, model_size, device, beam_size, vad_filter):
+def _transcribe_whisper(
+    source, language, model_size, device, beam_size, vad_filter, progress_callback=None
+):
     model = load_model(model_size, device)
     try:
         segments, info = model.transcribe(
@@ -156,20 +158,24 @@ def _transcribe_whisper(source, language, model_size, device, beam_size, vad_fil
             beam_size=beam_size,
             vad_filter=vad_filter,
         )
-        seg_list = [
-            {"start": float(s.start), "end": float(s.end), "text": s.text.strip()}
-            for s in segments
-            if s.text.strip()
-        ]
+        total_duration = float(info.duration) if info.duration else 0.0
+        seg_list = []
+        for s in segments:
+            if s.text.strip():
+                seg_list.append(
+                    {"start": float(s.start), "end": float(s.end), "text": s.text.strip()}
+                )
+            if progress_callback is not None and total_duration > 0:
+                progress_callback(min(1.0, float(s.end) / total_duration))
     except Exception as e:
         raise RuntimeError(f"Whisper transcription failed: {e}") from e
     return {"language": info.language, "segments": seg_list}
 
 
-def _transcribe_indic(source, language):
+def _transcribe_indic(source, language, progress_callback=None):
     try:
         fn = _get_indic_backend()
-        return fn(source, language=language)
+        return fn(source, language=language, progress_callback=progress_callback)
     except ImportError as e:
         raise RuntimeError(
             "Indic backend needs torch, transformers and onnxruntime. "
@@ -187,6 +193,7 @@ def transcribe(
     beam_size=5,
     vad_filter=True,
     backend="auto",
+    progress_callback=None,
 ):
     """Transcribe audio. Returns {"language": str, "segments": [...]}.
 
@@ -204,18 +211,30 @@ def transcribe(
     if backend == "indic":
         if language is None:
             raise ValueError("backend='indic' needs an explicit language, e.g. 'kn'.")
-        return _transcribe_indic(source, language)
+        return _transcribe_indic(source, language, progress_callback=progress_callback)
 
     if backend == "whisper":
         return _transcribe_whisper(
-            source, language, model_size, device, beam_size, vad_filter
+            source,
+            language,
+            model_size,
+            device,
+            beam_size,
+            vad_filter,
+            progress_callback=progress_callback,
         )
 
     # backend == "auto"
     if language is None:
         language, _conf = detect_language(source, model_size=model_size, device=device)
     if language in INDIC_LANGS:
-        return _transcribe_indic(source, language)
+        return _transcribe_indic(source, language, progress_callback=progress_callback)
     return _transcribe_whisper(
-        source, language, model_size, device, beam_size, vad_filter
+        source,
+        language,
+        model_size,
+        device,
+        beam_size,
+        vad_filter,
+        progress_callback=progress_callback,
     )
