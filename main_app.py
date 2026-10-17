@@ -37,7 +37,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "bac
 from vad.audio_utils import AudioPreprocessor
 from vad.vad_engine import SileroVadEngine
 from vad.segmenter import SpeechSegmenter
-from asr.asr_engine import OpenVINOASREngine, FasterWhisperEngine
+from asr.asr_engine import BaseASREngine, OpenVINOASREngine, FasterWhisperEngine
 from asr.streaming_asr import StreamingASRManager
 from asr.nlp_processor import NLPPostProcessor
 from app.loopback_capture import WASAPILoopbackCapture, HAS_PYAUDIO
@@ -61,6 +61,14 @@ except ImportError:
 
 # ── Feature flag ───────────────────────────────────────────────────────────────
 ASYNC_LLM_CORRECTION_ENABLED = os.environ.get("ASYNC_LLM_CORRECTION_ENABLED", "").lower() in {"1", "true", "yes"}
+
+# ── Global timeout for staleness safety net (overridden in main() from settings) ──
+STALE_AUDIO_TIMEOUT_SEC = 2.0
+try:
+    _s = load_settings()
+    STALE_AUDIO_TIMEOUT_SEC = float(_s.get("stale_audio_timeout_sec", 2.0))
+except Exception:
+    pass
 
 # ── LLMCorrector — ported from backend/asr/llm_corrector.py (Module 9) ──────
 # Provides correct(text, language) and validate_output(original, generated) with
@@ -232,20 +240,34 @@ logging.basicConfig(
 )
 
 
+def _resolve_asr_task_language(model_name: str):
+    """Helper: multilingual models (no .en suffix) use task='translate' + auto-detect;
+    English-only models use task='transcribe' + language='en'."""
+    if model_name.endswith(".en"):
+        return "en", "transcribe"
+    else:
+        # base, small, medium, large, turbo — multilingual -> translate to English
+        return None, "translate"
+
+
+
 class DesktopLiveSubtitlePipeline:
     """Single-process live subtitle engine linking WASAPI audio loopback to Qt desktop overlay."""
 
     def __init__(
         self,
         overlay: Optional["DesktopSubtitleOverlay"] = None,
-        model_name: str = "distil-small.en",
+        model_name: str = "base",
         min_chunk_floor_sec: float = 1.0,
         device_index: Optional[int] = None,
+        indic_lang: Optional[str] = None,
     ):
         self.overlay = overlay
         self.model_name = model_name
         self.min_chunk_floor_sec = min_chunk_floor_sec
         self.device_index = device_index
+        self.indic_lang = indic_lang
+        self._seg_counter = 0
 
         self.is_capturing = True
         self._shutdown_event = threading.Event()
@@ -268,29 +290,40 @@ class DesktopLiveSubtitlePipeline:
             min_chunk_floor_sec=min_chunk_floor_sec,
         )
 
-        logging.info(f"[Pipeline] Loading ASR model '{model_name}' (Intel CPU optimized)...")
-        self.asr_engine = OpenVINOASREngine(
-            model_size=model_name,
-            device="CPU",
-            language="en",
-        )
-        self.streaming_asr = StreamingASRManager(
-            asr_engine=self.asr_engine,
-            sample_rate=16000,
-            context_window_sec=2.0,
-            min_confirm_words=1,
-        )
-        self.nlp_processor = NLPPostProcessor(
-            punctuation_enabled=True,
-            hallucination_filter_enabled=True,
-            duplicate_filter_enabled=True,
-        )
+        if not self.indic_lang:
+            self.asr_language, self.asr_task = _resolve_asr_task_language(model_name)
+            logging.info(f"[Pipeline] Loading ASR model '{model_name}' (task={self.asr_task} lang={self.asr_language!r}, Intel CPU optimized)...")
+            self.asr_engine = OpenVINOASREngine(
+                model_size=model_name,
+                device="CPU",
+                language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+            )
+            self.streaming_asr = StreamingASRManager(
+                asr_engine=self.asr_engine,
+                sample_rate=16000,
+                context_window_sec=2.0,
+                min_confirm_words=1,
+            )
+            self.nlp_processor = NLPPostProcessor(
+                punctuation_enabled=True,
+                hallucination_filter_enabled=True,
+                duplicate_filter_enabled=True,
+            )
+            # For translate speed: cache last detected language to use as hint after first auto-detect
+            self.last_detected_language = None
 
-        # ── Step 3: Optional LLM post-correction (feature-gated, on-demand) ───────
-        self.llm_corrector = LLMCorrector(
-            model_path=os.environ.get("LLM_MODEL_PATH", ""),
-            enabled=ASYNC_LLM_CORRECTION_ENABLED,
-        )
+            # ── Step 3: Optional LLM post-correction (feature-gated, on-demand) ───────
+            self.llm_corrector = LLMCorrector(
+                model_path=os.environ.get("LLM_MODEL_PATH", ""),
+                enabled=ASYNC_LLM_CORRECTION_ENABLED,
+            )
+        else:
+            logging.info(f"[Pipeline] Indic mode enabled for language '{self.indic_lang}' (core_engine router).")
+            self.asr_engine = None
+            self.streaming_asr = None
+            self.nlp_processor = None
+            self.llm_corrector = None
+            self.last_detected_language = None
 
         self.audio_queue = queue.Queue(maxsize=300)
         self._format_logged = False
@@ -344,14 +377,24 @@ class DesktopLiveSubtitlePipeline:
             self.overlay.push_live_text("")
 
     def set_model(self, model_name: str):
-        """Dynamically reloads ASR model size ('distil-small.en' / 'tiny.en')."""
+        """Dynamically reloads ASR model size ('base' multilingual / 'distil-small.en' / 'tiny.en')."""
         if model_name == self.model_name:
             return
         logging.info(f"[Pipeline] Switching ASR model to '{model_name}'...")
         self.model_name = model_name
-        self.asr_engine = OpenVINOASREngine(model_size=model_name, device="CPU", language="en")
-        self.streaming_asr.asr_engine = self.asr_engine
-        logging.info(f"[Pipeline] Model switched to '{model_name}' successfully.")
+        if not self.indic_lang:
+            self.asr_language, self.asr_task = _resolve_asr_task_language(model_name)
+            self.asr_engine = OpenVINOASREngine(
+                model_size=model_name,
+                device="CPU",
+                language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+            )
+            if self.streaming_asr:
+                self.streaming_asr.asr_engine = self.asr_engine
+            self.last_detected_language = None
+            logging.info(f"[Pipeline] Model switched to '{model_name}' (task={self.asr_task} lang={self.asr_language!r}) successfully.")
+        else:
+            logging.info(f"[Pipeline] Model name set to '{model_name}' (Indic mode active; using IndicConformer for '{self.indic_lang}').")
 
     def _pipeline_worker(self):
         """Single-process pipeline thread: audio_queue -> VAD -> ASR -> NLP -> Overlay."""
@@ -388,7 +431,8 @@ class DesktopLiveSubtitlePipeline:
                 if self.segmenter.state.value != "NON_SPEECH" or speech_frames:
                     self.segmenter.reset()
                     speech_frames.clear()
-                    self.streaming_asr.reset()
+                    if self.streaming_asr:
+                        self.streaming_asr.reset()
                 continue
 
             try:
@@ -438,11 +482,48 @@ class DesktopLiveSubtitlePipeline:
 
     def _process_completed_segment(self, end_pcm: np.ndarray, speech_start_ts: float):
         """Transcribes a completed VAD speech segment and flushes the buffer to prevent leftover contamination."""
+        if self.indic_lang:
+            self._seg_counter += 1
+            seg_num = self._seg_counter
+            audio_dur_s = len(end_pcm) / 16000.0
+            t0 = time.perf_counter()
+            try:
+                from core_engine import transcribe
+                audio_float32 = end_pcm.astype(np.float32, copy=False)
+                result = transcribe(audio_float32, language=self.indic_lang)
+                asr_time_s = time.perf_counter() - t0
+                rtf = asr_time_s / audio_dur_s if audio_dur_s > 0 else 0.0
+                text = " ".join(s["text"] for s in result.get("segments", [])).strip()
+                char_count = len(text)
+                print(
+                    f"[indic] seg {seg_num} | audio {audio_dur_s:.1f}s | asr {asr_time_s:.1f}s | RTF {rtf:.2f} | chars {char_count}",
+                    flush=True,
+                )
+                if asr_time_s > audio_dur_s:
+                    print(
+                        f"[indic] seg {seg_num} | FALLING BEHIND (asr {asr_time_s:.1f}s > audio {audio_dur_s:.1f}s)",
+                        flush=True,
+                    )
+                if text and self.overlay:
+                    self.overlay.push_live_text(text, is_final=True)
+            except Exception as e:
+                asr_time_s = time.perf_counter() - t0
+                logging.error(f"[indic] seg {seg_num} transcription failed: {e}")
+            return
+
         t_asr = time.perf_counter()
+        # For translate, use cached language hint after first detection to cut ~50% latency (auto-detect is expensive)
+        if self.asr_task == "translate" and self.last_detected_language:
+            effective_lang = self.last_detected_language
+        else:
+            effective_lang = self.asr_language  # None = auto-detect
         ev = self.streaming_asr.process_completed_segment(
-            segment_audio=end_pcm, start_time=speech_start_ts, language="en"
+            segment_audio=end_pcm, start_time=speech_start_ts, language=effective_lang, task=self.asr_task
         )
         asr_ms = (time.perf_counter() - t_asr) * 1000.0
+        # Cache detected language for next segment speedup
+        if ev and ev.get("language"):
+            self.last_detected_language = ev.get("language")
 
         if not ev or not ev.get("text"):
             return
@@ -453,7 +534,7 @@ class DesktopLiveSubtitlePipeline:
         # NLP Post-Processing
         t_nlp = time.perf_counter()
         nlp_res = self.nlp_processor.process_final_transcript(
-            text=raw_text, language="en", no_speech_prob=0.0
+            text=raw_text, language=effective_lang or "en", no_speech_prob=0.0
         )
         nlp_ms = (time.perf_counter() - t_nlp) * 1000.0
 
@@ -462,9 +543,10 @@ class DesktopLiveSubtitlePipeline:
             return
 
         final_text = nlp_res["text"]
+        detected = ev.get("language", "?")
         logging.info(
             f"[SUBTITLE] Final Output: \"{final_text}\" "
-            f"(ASR: {asr_ms:.1f}ms, NLP: {nlp_ms:.1f}ms)"
+            f"(ASR: {asr_ms:.1f}ms, NLP: {nlp_ms:.1f}ms, lang: {detected}, task: {self.asr_task})"
         )
 
         # Push initial caption to Qt Desktop Overlay immediately (unchanged pipeline)
@@ -526,7 +608,7 @@ def main():
     parser.add_argument(
         "--model",
         default=None,
-        help="ASR Model size ('distil-small.en' or 'tiny.en'). Default: from settings",
+        help="ASR Model size ('base' multilingual translate, 'distil-small.en' or 'tiny.en'). Default: from settings",
     )
     parser.add_argument(
         "--min-chunk-floor",
@@ -546,12 +628,33 @@ def main():
         choices=["bottom", "middle", "top"],
         help="Subtitle screen position. Default: from settings",
     )
+    parser.add_argument(
+        "--indic-lang",
+        choices=["hi", "kn"],
+        default=None,
+        help="Opt-in Indic transcription language ('hi' or 'kn'). Default: not set",
+    )
+    parser.add_argument(
+        "--language",
+        "-l",
+        default=None,
+        help="Target spoken language (optional).",
+    )
     args = parser.parse_args()
 
     if args.list_devices:
         from app.loopback_capture import list_loopback_devices
         list_loopback_devices()
         sys.exit(0)
+
+    indic_lang = args.indic_lang
+    if indic_lang:
+        print("Loading Indic model...", flush=True)
+        t_load = time.time()
+        from indic_backend import load_indic_model
+        load_indic_model()
+        elapsed = time.time() - t_load
+        print(f"Indic model ready ({elapsed:.1f} s)", flush=True)
 
     # Load persisted settings; explicit CLI flags override them.
     global STALE_AUDIO_TIMEOUT_SEC
@@ -578,12 +681,24 @@ def main():
         font_size_mode=font_size, position_mode=position
     )
 
+    if indic_lang:
+        orig_apply_style = overlay.apply_style
+        def apply_indic_style():
+            orig_apply_style()
+            style = overlay.label.styleSheet()
+            overlay.label.setStyleSheet(
+                style.replace("'Segoe UI', Arial, sans-serif", "'Nirmala UI', sans-serif")
+            )
+        overlay.apply_style = apply_indic_style
+        overlay.apply_style()
+
     # Instantiate Pipeline Orchestrator
     pipeline = DesktopLiveSubtitlePipeline(
         overlay=overlay,
         model_name=model_name,
         min_chunk_floor_sec=min_chunk_floor,
         device_index=args.device,
+        indic_lang=indic_lang,
     )
 
     # Settings window (persists to JSON; display options apply immediately)
