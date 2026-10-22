@@ -44,8 +44,8 @@ from app.loopback_capture import WASAPILoopbackCapture, HAS_PYAUDIO
 from app.settings import load_settings, save_settings
 from app.settings_window import SettingsWindow
 from app.tray_icon import SystemTrayController
-from app.tray_icon import SystemTrayController
 from app.overlay_window import DesktopSubtitleOverlay
+from app.remote_client import RemoteLiveSubtitlePipeline
 
 # ── Qt availability check ─────────────────────────────────────────────────────
 try:
@@ -63,10 +63,10 @@ except ImportError:
 ASYNC_LLM_CORRECTION_ENABLED = os.environ.get("ASYNC_LLM_CORRECTION_ENABLED", "").lower() in {"1", "true", "yes"}
 
 # ── Global timeout for staleness safety net (overridden in main() from settings) ──
-STALE_AUDIO_TIMEOUT_SEC = 2.0
+STALE_AUDIO_TIMEOUT_SEC = 15.0
 try:
     _s = load_settings()
-    STALE_AUDIO_TIMEOUT_SEC = float(_s.get("stale_audio_timeout_sec", 2.0))
+    STALE_AUDIO_TIMEOUT_SEC = float(_s.get("stale_audio_timeout_sec", 15.0))
 except Exception:
     pass
 
@@ -261,12 +261,18 @@ class DesktopLiveSubtitlePipeline:
         min_chunk_floor_sec: float = 1.0,
         device_index: Optional[int] = None,
         indic_lang: Optional[str] = None,
+        asr_language: Optional[str] = None,
+        asr_task: Optional[str] = None,
+        meter_callback: Optional[Callable[[float, float, str], None]] = None,
+        subtitle_callback: Optional[Callable[[str, bool], None]] = None,
     ):
         self.overlay = overlay
         self.model_name = model_name
         self.min_chunk_floor_sec = min_chunk_floor_sec
         self.device_index = device_index
         self.indic_lang = indic_lang
+        self.meter_callback = meter_callback
+        self.subtitle_callback = subtitle_callback
         self._seg_counter = 0
 
         self.is_capturing = True
@@ -288,10 +294,13 @@ class DesktopLiveSubtitlePipeline:
             sample_rate=16000,
             frame_size=512,
             min_chunk_floor_sec=min_chunk_floor_sec,
+            max_chunk_duration_sec=2.5,
         )
 
         if not self.indic_lang:
-            self.asr_language, self.asr_task = _resolve_asr_task_language(model_name)
+            default_lang, default_task = _resolve_asr_task_language(model_name)
+            self.asr_language = asr_language if asr_language is not None else default_lang
+            self.asr_task = asr_task if asr_task is not None else default_task
             logging.info(f"[Pipeline] Loading ASR model '{model_name}' (task={self.asr_task} lang={self.asr_language!r}, Intel CPU optimized)...")
             self.asr_engine = OpenVINOASREngine(
                 model_size=model_name,
@@ -324,6 +333,16 @@ class DesktopLiveSubtitlePipeline:
             self.nlp_processor = None
             self.llm_corrector = None
             self.last_detected_language = None
+
+        # Dynamically scale staleness safety ceiling to model inference duration on Intel CPU
+        if self.indic_lang:
+            self.stale_timeout_sec = 60.0
+        elif model_name == "small":
+            self.stale_timeout_sec = 18.0
+        elif model_name == "base":
+            self.stale_timeout_sec = 10.0
+        else:
+            self.stale_timeout_sec = max(6.0, STALE_AUDIO_TIMEOUT_SEC)
 
         self.audio_queue = queue.Queue(maxsize=300)
         self._format_logged = False
@@ -419,7 +438,7 @@ class DesktopLiveSubtitlePipeline:
             # ── Staleness safety net ──────────────────────────────────────────
             if enqueued_at is not None and (
                 time.monotonic() - enqueued_at
-            ) > STALE_AUDIO_TIMEOUT_SEC:
+            ) > self.stale_timeout_sec:
                 self._stale_chunks_dropped += 1
                 if self._stale_chunks_dropped % 10 == 1:
                     logging.warning(
@@ -449,6 +468,12 @@ class DesktopLiveSubtitlePipeline:
                     peak = float(np.abs(frame).max()) if len(frame) > 0 else 0.0
                     if frame_idx % 31 == 0:  # ~1s meter
                         logging.info(f"[Audio Meter] t={current_ts:.2f}s | Peak: {peak:.4f} ({peak:.1%}) | VAD Prob: {prob:.3f} | State: {event['state']}")
+
+                    if self.meter_callback and frame_idx % 2 == 0:
+                        try:
+                            self.meter_callback(peak, prob, event["state"])
+                        except Exception:
+                            pass
 
                     if ev_type == "SPEECH_START":
                         speech_frames = list(pre_roll_buffer) + [frame]
@@ -506,6 +531,11 @@ class DesktopLiveSubtitlePipeline:
                     )
                 if text and self.overlay:
                     self.overlay.push_live_text(text, is_final=True)
+                if text and self.subtitle_callback:
+                    try:
+                        self.subtitle_callback(text, True)
+                    except Exception:
+                        pass
             except Exception as e:
                 asr_time_s = time.perf_counter() - t0
                 logging.error(f"[indic] seg {seg_num} transcription failed: {e}")
@@ -552,6 +582,11 @@ class DesktopLiveSubtitlePipeline:
         # Push initial caption to Qt Desktop Overlay immediately (unchanged pipeline)
         if self.overlay:
             self.overlay.push_live_text(final_text, is_final=is_final)
+        if self.subtitle_callback:
+            try:
+                self.subtitle_callback(final_text, is_final)
+            except Exception:
+                pass
 
         # ── Step 3: Schedule on-demand LLM post-correction (non-blocking) ────────
         if ASYNC_LLM_CORRECTION_ENABLED and self.llm_corrector:
@@ -640,6 +675,32 @@ def main():
         default=None,
         help="Target spoken language (optional).",
     )
+    parser.add_argument(
+        "--no-gui",
+        action="store_true",
+        help="Run headless / tray-only without opening the Control Center GUI.",
+    )
+    parser.add_argument(
+        "--start",
+        action="store_true",
+        help="Automatically start live subtitles immediately on launch.",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["shared", "local"],
+        default=None,
+        help="Inference mode: 'shared' (connect to remote Docker server) or 'local' (run in-process / local engine).",
+    )
+    parser.add_argument(
+        "--remote-url",
+        default=None,
+        help="WebSocket URL of shared ML server (e.g. ws://shared-ml-server:8765).",
+    )
+    parser.add_argument(
+        "--shared",
+        action="store_true",
+        help="Shortcut to enable shared remote inference mode.",
+    )
     args = parser.parse_args()
 
     if args.list_devices:
@@ -659,6 +720,13 @@ def main():
     # Load persisted settings; explicit CLI flags override them.
     global STALE_AUDIO_TIMEOUT_SEC
     settings = load_settings()
+    if args.shared:
+        settings["asr_mode"] = "shared"
+    elif args.mode:
+        settings["asr_mode"] = args.mode
+    if args.remote_url:
+        settings["remote_asr_url"] = args.remote_url
+
     model_from_cli = args.model is not None
     model_name = args.model if model_from_cli else str(settings.get("model", "distil-small.en"))
     min_chunk_floor = args.min_chunk_floor if args.min_chunk_floor is not None \
@@ -667,7 +735,7 @@ def main():
         else str(settings.get("font_size", "medium"))
     position = args.position if args.position is not None \
         else str(settings.get("position", "bottom"))
-    STALE_AUDIO_TIMEOUT_SEC = float(settings.get("stale_audio_timeout_sec", 2.0))
+    STALE_AUDIO_TIMEOUT_SEC = float(settings.get("stale_audio_timeout_sec", 15.0))
 
     if not HAS_QT:
         logging.error("PyQt6 or PySide6 is required. Install via: pip install PyQt6")
@@ -692,65 +760,135 @@ def main():
         overlay.apply_style = apply_indic_style
         overlay.apply_style()
 
-    # Instantiate Pipeline Orchestrator
-    pipeline = DesktopLiveSubtitlePipeline(
-        overlay=overlay,
-        model_name=model_name,
-        min_chunk_floor_sec=min_chunk_floor,
-        device_index=args.device,
-        indic_lang=indic_lang,
+    # Enumerate devices for UI
+    devices = []
+    try:
+        from app.loopback_capture import get_loopback_devices
+        devices = get_loopback_devices()
+    except Exception as e:
+        logging.warning(f"Could not enumerate loopback devices: {e}")
+
+    # Instantiate Studio Control Panel GUI
+    from app.control_panel import ControlPanelWindow
+    control_panel = ControlPanelWindow(current_settings=settings, device_list=devices)
+
+    active_pipeline = None
+
+    def start_pipeline_with_config(config: dict):
+        nonlocal active_pipeline
+        if active_pipeline:
+            active_pipeline.stop()
+            active_pipeline = None
+
+        req_mode = str(config.get("asr_mode", settings.get("asr_mode", "shared")))
+        req_remote_url = str(config.get("remote_asr_url", settings.get("remote_asr_url", "ws://localhost:8765")))
+        req_model = str(config.get("model_name", model_name))
+        req_indic = config.get("indic_lang")
+        req_asr_lang = config.get("asr_language")
+        req_asr_task = config.get("asr_task")
+        req_dev_idx = config.get("device_index")
+        req_font_size = str(config.get("font_size", font_size))
+        req_pos = str(config.get("position", position))
+
+        overlay.set_font_size(req_font_size)
+        overlay.set_position(req_pos)
+
+        if req_mode == "shared":
+            logging.info(f"[ControlCenter] Launching Remote ASR Client -> {req_remote_url}")
+            active_pipeline = RemoteLiveSubtitlePipeline(
+                server_url=req_remote_url,
+                overlay=overlay,
+                device_index=req_dev_idx,
+                meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
+                subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
+            )
+            active_pipeline.start()
+            logging.info(f"[ControlCenter] Remote pipeline streaming to {req_remote_url}.")
+            return
+
+        if req_indic:
+            try:
+                from indic_backend import load_indic_model
+                load_indic_model()
+            except Exception as e:
+                logging.error(f"Indic model load failed: {e}")
+
+        active_pipeline = DesktopLiveSubtitlePipeline(
+            overlay=overlay,
+            model_name=req_model,
+            min_chunk_floor_sec=min_chunk_floor,
+            device_index=req_dev_idx,
+            indic_lang=req_indic,
+            asr_language=req_asr_lang,
+            asr_task=req_asr_task,
+            meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
+            subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
+        )
+        active_pipeline.start()
+        logging.info(
+            f"[ControlCenter] Local pipeline started (model='{req_model}', indic='{req_indic}', "
+            f"lang='{req_asr_lang}', task='{req_asr_task}')."
+        )
+
+    def stop_active_pipeline():
+        nonlocal active_pipeline
+        if active_pipeline:
+            active_pipeline.stop()
+            active_pipeline = None
+            logging.info("[ControlCenter] Pipeline stopped.")
+
+    control_panel.start_requested.connect(start_pipeline_with_config)
+    control_panel.stop_requested.connect(stop_active_pipeline)
+    control_panel.pause_toggled.connect(
+        lambda active: active_pipeline.set_capturing(active) if active_pipeline else None
     )
+    control_panel.overlay_preview_requested.connect(lambda size, pos: (
+        overlay.set_font_size(size),
+        overlay.set_position(pos),
+        overlay.push_live_text("✨ Live Subtitle Studio: Subtitle overlay preview!", is_final=True)
+    ))
 
-    # Settings window (persists to JSON; display options apply immediately)
-    def apply_settings(saved: dict):
-        save_settings(saved)
-        try:
-            overlay.set_font_size(str(saved["font_size"]))
-        except Exception:
-            pass
-        try:
-            overlay.set_position(str(saved["position"]))
-        except Exception:
-            pass
-        try:
-            pipeline.set_model(str(saved["model"]))
-        except Exception:
-            pass
+    def open_control_center():
+        control_panel.show()
+        control_panel.raise_()
+        control_panel.activateWindow()
 
-    settings_window = SettingsWindow(settings, on_saved=None if model_from_cli else apply_settings)
-
-    def open_settings():
-        settings_window.show()
-        settings_window.raise_()
-        settings_window.activateWindow()
-
-    # Instantiate System Tray Controller
+    # System Tray Controller
     tray = SystemTrayController(
-        on_toggle_capture=pipeline.set_capturing,
-        on_change_model=pipeline.set_model,
+        on_toggle_capture=lambda active: active_pipeline.set_capturing(active) if active_pipeline else None,
+        on_change_model=lambda m: active_pipeline.set_model(m) if active_pipeline else None,
         on_change_font_size=overlay.set_font_size,
         on_change_position=overlay.set_position,
-        on_open_settings=open_settings,
-        on_quit=lambda: _quit_app(app, pipeline),
+        on_open_settings=open_control_center,
+        on_quit=lambda: _quit_app(app, lambda: active_pipeline),
     )
 
-    pipeline.start()
+    logging.info("=" * 70)
+    logging.info("Live Subtitle Studio Application Ready")
+    logging.info("Control Center Frontend Active")
+    logging.info("=" * 70)
 
-    logging.info("=" * 70)
-    logging.info("Single-Process PC Subtitle Application Ready")
-    logging.info("Capturing System Audio via WASAPI Loopback")
-    logging.info("Subtitles rendering on Desktop Overlay Window")
-    logging.info("=" * 70)
+    if not args.no_gui:
+        control_panel.show()
+        control_panel.raise_()
+        control_panel.activateWindow()
+
+    # If --start flag or headless CLI mode was passed, launch pipeline immediately
+    if args.start or (args.no_gui and (model_from_cli or indic_lang)):
+        control_panel._on_start_toggle_clicked()
 
     try:
         sys.exit(app.exec())
     except KeyboardInterrupt:
-        _quit_app(app, pipeline)
+        _quit_app(app, lambda: active_pipeline)
 
 
-def _quit_app(app, pipeline):
+def _quit_app(app, get_pipeline_fn=None):
     logging.info("[App] Exiting PC Application...")
-    pipeline.stop()
+    if get_pipeline_fn:
+        p = get_pipeline_fn()
+        if p:
+            p.stop()
     app.quit()
     sys.exit(0)
 

@@ -38,7 +38,7 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
 
         self.font_size_mode = font_size_mode
         self.position_mode = position_mode
-        self.fade_timeout_ms = 4000  # 4 seconds auto-fade
+        self.fade_timeout_ms = 8000  # 8 seconds auto-fade (keeps subtitles clearly visible on CPU)
 
         # Window flags for transparent, click-through, stay-on-top overlay
         self.setWindowFlags(
@@ -85,7 +85,7 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
                 color: #FFFFFF;
                 border-radius: 10px;
                 padding: {padding};
-                font-family: 'Segoe UI', Arial, sans-serif;
+                font-family: 'Nirmala UI', 'Segoe UI', Arial, sans-serif;
                 font-size: {px}px;
                 font-weight: 600;
             }}
@@ -118,8 +118,6 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
     def push_live_text(self, text: str, is_final: bool = False):
         """Thread-safe entry point to push live transcript text to the overlay."""
         if QT_BINDING:
-            print(f"[OVERLAY] push_live_text called on thread '{threading.current_thread().name}' "
-                  f"text={text[:60]!r} is_final={is_final}")
             self.update_text_signal.emit(text, is_final)
 
     @pyqtSlot(str, bool)
@@ -131,13 +129,10 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
             return
 
         self.label.setText(clean_text)
-        self.label.show()
-        self.show()
-
-        geo = self.geometry()
-        print(f"[OVERLAY] slot on thread '{threading.current_thread().name}' | "
-              f"isVisible={self.isVisible()} labelVisible={self.label.isVisible()} "
-              f"geometry=({geo.x()},{geo.y()},{geo.width()}x{geo.height()}) text={clean_text[:60]!r}")
+        if not self.label.isVisible():
+            self.label.show()
+        if not self.isVisible():
+            self.show()
 
         # Restart 4-second auto-fade timer on final or streaming update
         self.fade_timer.start(self.fade_timeout_ms)
@@ -145,8 +140,10 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
     @pyqtSlot()
     def hide_text(self):
         """Hides the subtitle text element."""
-        self.label.hide()
-        self.hide()
+        if self.label.isVisible():
+            self.label.hide()
+        if self.isVisible():
+            self.hide()
 
     def set_font_size(self, mode: str):
         """Updates font size mode ('small', 'medium', 'large')."""

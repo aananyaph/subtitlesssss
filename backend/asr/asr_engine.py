@@ -33,8 +33,12 @@ class BaseASREngine(ABC):
     """Abstract Base Class for ASR Engine implementations (Pluggable Architecture)."""
 
     @abstractmethod
-    def transcribe(self, audio_16k_float32: np.ndarray, language: str = "en") -> dict:
+    def transcribe(self, audio_16k_float32: np.ndarray, language: str = "en", task: str = "transcribe") -> dict:
         """Transcribe 1D Float32 mono audio array at 16000 Hz.
+        
+        Args:
+            language: ISO code or None for auto-detect (multilingual model).
+            task: 'transcribe' (keep source language) or 'translate' (to English).
         
         Returns:
             dict containing 'text', 'segments', 'language', and 'processing_time_s'.
@@ -69,8 +73,8 @@ class FasterWhisperEngine(BaseASREngine):
         t0 = time.perf_counter()
 
         try:
-            from faster_whisper import WhisperModel
             import os
+            # Cap at 4 threads to prevent 100% CPU lockup and maintain responsiveness for OS/audio/UI
             num_threads = min(4, os.cpu_count() or 4)
             self.model = WhisperModel(
                 self.model_size,
@@ -85,7 +89,7 @@ class FasterWhisperEngine(BaseASREngine):
             print(f"[ASR Engine ERROR] Failed to load faster-whisper model '{self.model_size}': {e}")
             raise RuntimeError(f"ASR Model initialization failed: {e}")
 
-    def transcribe(self, audio_16k_float32: np.ndarray, language: str = None) -> dict:
+    def transcribe(self, audio_16k_float32: np.ndarray, language: str = None, task: str = "transcribe") -> dict:
         """Transcribes 1D Float32 16kHz mono audio array using faster-whisper Config F/Vocab."""
         if self.model is None:
             raise RuntimeError("ASR Model is not initialized.")
@@ -93,11 +97,26 @@ class FasterWhisperEngine(BaseASREngine):
         if audio_16k_float32 is None or len(audio_16k_float32) == 0:
             return {"text": "", "segments": [], "language": language or self.default_language, "processing_time_s": 0.0}
 
-        target_lang = language or self.default_language or "en"
+        # task: 'transcribe' (default) or 'translate' (multilingual base -> English)
+        if task not in ("transcribe", "translate"):
+            task = "transcribe"
+        # Language handling: None = auto-detect for multilingual base.
+        # For translate task, None is preferred (detect any language -> English).
+        if language is None:
+            if task == "translate":
+                target_lang = None  # auto-detect source language
+            else:
+                target_lang = self.default_language  # may be None or "en"
+        else:
+            target_lang = language
         t0 = time.perf_counter()
 
         initial_prompt = None
-        if INITIAL_PROMPT_ENABLED and self.domain_hotwords:
+        if target_lang == "kn" and task == "transcribe":
+            initial_prompt = "ನಮಸ್ಕಾರ, ಇದು ಕನ್ನಡ ಭಾಷೆ"
+        elif target_lang == "hi" and task == "transcribe":
+            initial_prompt = "नमस्ते, यह हिन्दी भाषा है"
+        elif INITIAL_PROMPT_ENABLED and self.domain_hotwords:
             initial_prompt = f"The following technical terms may appear in speech: {', '.join(self.domain_hotwords)}."
 
         hotwords = None
@@ -107,12 +126,17 @@ class FasterWhisperEngine(BaseASREngine):
         try:
             kwargs = {
                 "language": target_lang,
+                "task": task,
                 "beam_size": 1,
                 "best_of": 1,
                 "patience": 1.0,
                 "condition_on_previous_text": False,
                 "vad_filter": False,
                 "word_timestamps": False,
+                "without_timestamps": True,
+                "repetition_penalty": 1.25,
+                "no_repeat_ngram_size": 3,
+                "compression_ratio_threshold": 2.4,
             }
             if initial_prompt:
                 kwargs["initial_prompt"] = initial_prompt
@@ -192,6 +216,7 @@ class OpenVINOASREngine(BaseASREngine):
         try:
             from faster_whisper import WhisperModel
             import os
+            # Cap at 4 threads to prevent 100% CPU lockup and maintain responsiveness for OS/audio/UI
             num_threads = min(4, os.cpu_count() or 4)
             # Standardize model size string
             target_model = self.model_size.replace("distil-whisper/", "")
@@ -209,7 +234,7 @@ class OpenVINOASREngine(BaseASREngine):
             print(f"[OpenVINO ASR Engine ERROR] Failed to load OpenVINO model: {e}")
             raise RuntimeError(f"OpenVINO ASR Model initialization failed: {e}")
 
-    def transcribe(self, audio_16k_float32: np.ndarray, language: str = None) -> dict:
+    def transcribe(self, audio_16k_float32: np.ndarray, language: str = None, task: str = "transcribe") -> dict:
         """Transcribes 1D Float32 16kHz mono audio array using OpenVINO Config F/Vocab."""
         if self.model is None:
             raise RuntimeError("OpenVINO ASR Model is not initialized.")
@@ -217,27 +242,43 @@ class OpenVINOASREngine(BaseASREngine):
         if audio_16k_float32 is None or len(audio_16k_float32) == 0:
             return {"text": "", "segments": [], "language": language or self.default_language, "processing_time_s": 0.0}
 
-        target_lang = language or self.default_language or "en"
+        if task not in ("transcribe", "translate"):
+            task = "transcribe"
+        if language is None:
+            if task == "translate":
+                target_lang = None  # auto-detect source language for translation
+            else:
+                target_lang = self.default_language
+        else:
+            target_lang = language
         t0 = time.perf_counter()
 
         # Diagnostic check: Ensure audio array is contiguous float32
         audio_16k_float32 = np.ascontiguousarray(audio_16k_float32, dtype=np.float32)
 
         initial_prompt = None
-        if INITIAL_PROMPT_ENABLED and self.domain_hotwords:
+        if target_lang == "kn" and task == "transcribe":
+            initial_prompt = "ನಮಸ್ಕಾರ, ಇದು ಕನ್ನಡ ಭಾಷೆ"
+        elif target_lang == "hi" and task == "transcribe":
+            initial_prompt = "नमस्ते, यह हिन्दी भाषा है"
+        elif INITIAL_PROMPT_ENABLED and self.domain_hotwords:
             initial_prompt = f"The following technical terms may appear in speech: {', '.join(self.domain_hotwords)}."
 
         hotwords = None
         if HOTWORDS_ENABLED and self.domain_hotwords:
             hotwords = " ".join(self.domain_hotwords)
 
+        info = None
         try:
             if self.pipe is not None:
                 generate_kwargs = {
-                    "language": target_lang,
+                    "language": target_lang if target_lang is not None else "en",
+                    "task": task,
                     "num_beams": 1,
                     "num_return_sequences": 1,
                     "length_penalty": 1.0,
+                    "repetition_penalty": 1.25,
+                    "no_repeat_ngram_size": 3,
                 }
                 if initial_prompt and hasattr(self, "processor") and self.processor is not None:
                     try:
@@ -253,12 +294,17 @@ class OpenVINOASREngine(BaseASREngine):
             else:
                 kwargs = {
                     "language": target_lang,
+                    "task": task,
                     "beam_size": 1,
                     "best_of": 1,
                     "patience": 1.0,
                     "condition_on_previous_text": False,
                     "vad_filter": False,
-                    "word_timestamps": False
+                    "word_timestamps": False,
+                    "without_timestamps": True,
+                    "repetition_penalty": 1.25,
+                    "no_repeat_ngram_size": 3,
+                    "compression_ratio_threshold": 2.4,
                 }
                 if initial_prompt:
                     kwargs["initial_prompt"] = initial_prompt
@@ -273,13 +319,25 @@ class OpenVINOASREngine(BaseASREngine):
 
                 text_parts = [seg.text.strip() for seg in segments_generator if seg.text.strip()]
                 full_text = " ".join(text_parts).strip()
+                # Capture detected language from info if available (for translate auto-detect)
+                try:
+                    detected_lang = getattr(info, "language", None) if info is not None else None
+                except Exception:
+                    detected_lang = None
+                # When task is translate and target_lang was None, use detected language
+                return_lang = detected_lang if detected_lang else target_lang
 
             elapsed = time.perf_counter() - t0
-            print(f"[TIMER] OpenVINO ASR Transcribe: {elapsed * 1000.0:.2f} ms | Model ID: {id(self.model)} | Audio Dtype: {audio_16k_float32.dtype}")
+            # Include detected language in log
+            try:
+                log_lang = getattr(info, "language", target_lang) if info is not None else target_lang
+            except Exception:
+                log_lang = target_lang
+            print(f"[TIMER] OpenVINO ASR Transcribe (task={task} lang={target_lang} -> detected={log_lang}): {elapsed * 1000.0:.2f} ms | Model ID: {id(self.model)} | Audio Dtype: {audio_16k_float32.dtype}")
             return {
                 "text": full_text,
                 "segments": [{"start": 0.0, "end": round(len(audio_16k_float32) / 16000.0, 2), "text": full_text}],
-                "language": target_lang,
+                "language": return_lang if return_lang else target_lang,
                 "processing_time_s": elapsed
             }
         except Exception as e:

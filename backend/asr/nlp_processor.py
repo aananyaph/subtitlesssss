@@ -258,6 +258,9 @@ class NLPPostProcessor:
                 punctuated_text = raw_text
             print(f"[NLP] raw='{raw_text}' -> punctuated='{punctuated_text}'")
 
+        if language == "kn":
+            punctuated_text = sanitize_indic_script(punctuated_text, "kn")
+
         nlp_latency = (time.perf_counter() - t0) * 1000.0
         print(f"[NLP] Final transcript processed in {nlp_latency:.2f}ms.")
 
@@ -267,3 +270,20 @@ class NLPPostProcessor:
             "text": punctuated_text,
             "nlp_latency_ms": nlp_latency,
         }
+
+
+def sanitize_indic_script(text: str, target_lang: str) -> str:
+    """Converts any stray Tamil unicode block characters (0x0B80-0x0BFF) into their
+    exact Kannada unicode equivalents (0x0C80-0x0CFF) based on the standard ISCII offset.
+    """
+    if target_lang != "kn" or not text:
+        return text
+    converted = []
+    for ch in text:
+        code = ord(ch)
+        if 0x0B80 <= code <= 0x0BFF:
+            kn_code = code - 0x0B80 + 0x0C80
+            converted.append(chr(kn_code))
+        else:
+            converted.append(ch)
+    return "".join(converted)

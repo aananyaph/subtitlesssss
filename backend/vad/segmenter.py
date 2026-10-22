@@ -86,11 +86,7 @@ class SpeechSegmenter:
             if len(self.current_segment_frames) >= self.max_speech_frames:
                 self.state = SpeechState.NON_SPEECH
 
-                min_floor_samples = int(self.min_chunk_floor_sec * self.sample_rate)
                 segment_pcm = np.concatenate(self.current_segment_frames)
-                if len(segment_pcm) > min_floor_samples:
-                    segment_pcm = segment_pcm[:min_floor_samples]
-
                 duration_s = len(segment_pcm) / float(self.sample_rate)
                 self.total_speech_duration_s += duration_s
 

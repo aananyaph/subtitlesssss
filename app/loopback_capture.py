@@ -193,3 +193,37 @@ def list_loopback_devices():
             pass
     print("=" * 60 + "\n")
     p.terminate()
+
+
+def get_loopback_devices():
+    """Returns a list of dicts: [{'index': int, 'name': str, 'is_loopback': bool, 'is_default': bool}]."""
+    devices = []
+    if not HAS_PYAUDIO:
+        return devices
+    try:
+        p = pyaudio.PyAudio()
+        default_idx = None
+        try:
+            default_lb = p.get_default_wasapi_loopback()
+            if default_lb:
+                default_idx = default_lb.get("index")
+        except Exception:
+            pass
+
+        for i in range(p.get_device_count()):
+            try:
+                info = p.get_device_info_by_index(i)
+                is_lb = bool(info.get("isLoopbackDevice", False))
+                name = info.get("name", f"Device #{i}")
+                devices.append({
+                    "index": i,
+                    "name": name,
+                    "is_loopback": is_lb,
+                    "is_default": (i == default_idx),
+                })
+            except Exception:
+                pass
+        p.terminate()
+    except Exception as e:
+        logging.error(f"[Loopback] Error enumerating devices: {e}")
+    return devices

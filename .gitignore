@@ -25,5 +25,13 @@ log.txt
 .DS_Store
 Thumbs.db
 
-# Silero VAD model (optional: auto-downloaded on first run)
-# backend/vad/silero_vad.onnx
+# Silero VAD model & HuggingFace model cache (keep out of git)
+models/
+*.onnx
+*.bin
+*.pt
+*.safetensors
+
+# Local environment configuration
+.env
+.env.local

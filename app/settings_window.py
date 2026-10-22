@@ -15,6 +15,7 @@ try:
         QFormLayout,
         QHBoxLayout,
         QLabel,
+        QLineEdit,
         QPushButton,
         QVBoxLayout,
     )
@@ -29,6 +30,7 @@ except ImportError:
             QFormLayout,
             QHBoxLayout,
             QLabel,
+            QLineEdit,
             QPushButton,
             QVBoxLayout,
         )
@@ -101,7 +103,21 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         self.stale_timeout_spin.setValue(float(self._settings.get("stale_audio_timeout_sec", 2.0)))
         form.addRow("Stale Audio Timeout (s)", self.stale_timeout_spin)
 
-        restart_note = QLabel("Chunk floor & staleness timeout apply on next launch.", self)
+        # ASR Inference Mode (Shared Server vs Local Engine)
+        self.mode_combo = QComboBox(self)
+        self.mode_combo.addItem("Shared Inference Server (Team Server)", "shared")
+        self.mode_combo.addItem("Local Engine (Docker / Host)", "local")
+        mode_idx = self.mode_combo.findData(self._settings.get("asr_mode", "shared"))
+        if mode_idx >= 0:
+            self.mode_combo.setCurrentIndex(mode_idx)
+        form.addRow("Inference Mode", self.mode_combo)
+
+        self.remote_url_edit = QLineEdit(self)
+        self.remote_url_edit.setPlaceholderText("ws://shared-ml-server.local:8765")
+        self.remote_url_edit.setText(str(self._settings.get("remote_asr_url", "ws://localhost:8765")))
+        form.addRow("Server URL", self.remote_url_edit)
+
+        restart_note = QLabel("Chunk floor, staleness timeout & inference mode apply on next launch.", self)
         restart_note.setStyleSheet("color: #888; font-size: 11px;")
         form.addRow(restart_note)
 
@@ -129,6 +145,8 @@ class SettingsWindow(QDialog if QT_BINDING else object):
             "min_chunk_floor_sec": self.chunk_floor_spin.value(),
             "stale_audio_timeout_sec": self.stale_timeout_spin.value(),
             "device_index": self._settings.get("device_index"),
+            "asr_mode": self.mode_combo.currentData(),
+            "remote_asr_url": self.remote_url_edit.text().strip() or "ws://localhost:8765",
         }
 
     def _apply_display_settings(self):

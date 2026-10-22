@@ -52,7 +52,7 @@ class StreamingASRManager:
         if len(self.audio_buffer) > self.context_window_samples:
             self.audio_buffer = self.audio_buffer[-self.context_window_samples:]
 
-    def process_streaming_window(self, time_offset: float = 0.0, language: str = "en") -> List[Dict]:
+    def process_streaming_window(self, time_offset: float = 0.0, language: str = "en", task: str = "transcribe") -> List[Dict]:
         """Runs ASR over the current rolling context window and applies LocalAgreement stabilization.
         
         Returns:
@@ -61,7 +61,7 @@ class StreamingASRManager:
         if len(self.audio_buffer) == 0:
             return []
 
-        res = self.asr_engine.transcribe(self.audio_buffer, language=language)
+        res = self.asr_engine.transcribe(self.audio_buffer, language=language, task=task)
         candidate_text = res.get("text", "").strip()
 
         if not candidate_text:
@@ -126,16 +126,19 @@ class StreamingASRManager:
 
         return events
 
-    def process_completed_segment(self, segment_audio: np.ndarray, start_time: float, language: str = "en") -> Dict:
+    def process_completed_segment(self, segment_audio: np.ndarray, start_time: float, language: str = "en", task: str = "transcribe") -> Dict:
         """Processes a complete VAD speech segment (emitted at SPEECH_END) into a confirmed FINAL transcript."""
         if len(segment_audio) == 0:
             return None
 
-        res = self.asr_engine.transcribe(segment_audio, language=language)
+        res = self.asr_engine.transcribe(segment_audio, language=language, task=task)
         text = res.get("text", "").strip()
 
         if not text:
             return None
+
+        # Use detected language from ASR if available (important for translate auto-detect)
+        detected_lang = res.get("language", language)
 
         duration_s = len(segment_audio) / float(self.sample_rate)
         end_time = round(start_time + duration_s, 2)
@@ -149,7 +152,7 @@ class StreamingASRManager:
             text=text,
             start=round(start_time, 2),
             end=end_time,
-            language=language
+            language=detected_lang
         ).to_dict()
 
     def reset(self):

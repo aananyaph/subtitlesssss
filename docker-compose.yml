@@ -1,0 +1,77 @@
+version: '3.8'
+
+# ==============================================================================
+# Live Subtitle Studio - Docker Compose Configuration
+#
+# Profiles:
+#   - local-ml: Run ML engine locally on developer laptop
+#       docker compose --profile local-ml up -d
+#   - server:   Run on a dedicated shared CPU server for the entire team
+#       docker compose --profile server up -d
+#
+# If running in shared mode on a laptop, no local container is needed;
+# the desktop client points directly to REMOTE_ASR_URL defined in .env.
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # Local ML Service (Optional on laptops; profile: local-ml)
+  # ----------------------------------------------------------------------------
+  subtitle-engine-local:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: live-subtitle-studio:latest
+    container_name: live_subtitle_engine_local
+    profiles: ["local-ml"]
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8765}:${CONTAINER_PORT:-8765}"
+    volumes:
+      # Persistent host cache for model weights (kept OUTSIDE Docker image)
+      - ${MODEL_DIR:-./models}:/app/models
+      - ./samples:/app/samples:ro
+    environment:
+      - PYTHONUNBUFFERED=${PYTHONUNBUFFERED:-1}
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+      - HF_HOME=/app/models
+      - HOST=0.0.0.0
+      - PORT=${CONTAINER_PORT:-8765}
+    command: [
+      "python", "backend/app_bridge.py",
+      "--host", "0.0.0.0",
+      "--model", "${MODEL_NAME:-base}",
+      "--port", "${CONTAINER_PORT:-8765}"
+    ]
+
+  # ----------------------------------------------------------------------------
+  # Dedicated Shared Server Service (Deployed on team CPU server; profile: server)
+  # ----------------------------------------------------------------------------
+  subtitle-engine-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: live-subtitle-studio:latest
+    container_name: live_subtitle_engine_server
+    profiles: ["server"]
+    restart: always
+    ports:
+      - "${HOST_PORT:-8765}:${CONTAINER_PORT:-8765}"
+    volumes:
+      # Model directory mounted read-only on shared server
+      - ${MODEL_DIR:-./models}:/app/models
+      - ./samples:/app/samples:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OMP_NUM_THREADS=${OMP_NUM_THREADS:-4}
+      - MKL_NUM_THREADS=${MKL_NUM_THREADS:-4}
+      - HF_HOME=/app/models
+      - HOST=0.0.0.0
+      - PORT=${CONTAINER_PORT:-8765}
+    command: [
+      "python", "backend/app_bridge.py",
+      "--host", "0.0.0.0",
+      "--model", "${MODEL_NAME:-base}",
+      "--port", "${CONTAINER_PORT:-8765}"
+    ]
