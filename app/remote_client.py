@@ -180,7 +180,17 @@ class RemoteLiveSubtitlePipeline:
         while not self._shutdown_event.is_set():
             try:
                 logging.info(f"[RemotePipeline] Connecting to shared ASR server {self.server_url}...")
-                async with websockets.connect(self.server_url, ping_interval=20, ping_timeout=10) as ws:
+                conn_args = {"ping_interval": 20, "ping_timeout": 10}
+                headers = {"ngrok-skip-browser-warning": "true"}
+                try:
+                    conn_ctx = websockets.connect(self.server_url, additional_headers=headers, **conn_args)
+                except TypeError:
+                    try:
+                        conn_ctx = websockets.connect(self.server_url, extra_headers=headers, **conn_args)
+                    except TypeError:
+                        conn_ctx = websockets.connect(self.server_url, **conn_args)
+
+                async with conn_ctx as ws:
                     self.is_connected = True
                     logging.info(f"[RemotePipeline] Connected to shared ASR server successfully.")
                     if self.overlay:
