@@ -799,6 +799,12 @@ def main():
                 server_url=req_remote_url,
                 overlay=overlay,
                 device_index=req_dev_idx,
+                asr_config={
+                    "model_name": req_model,
+                    "indic_lang": req_indic,
+                    "asr_language": req_asr_lang,
+                    "asr_task": req_asr_task,
+                },
                 meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
                 subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
             )

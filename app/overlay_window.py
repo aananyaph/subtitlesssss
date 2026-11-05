@@ -1,9 +1,10 @@
 """Desktop Subtitle Overlay Window using PyQt6 / PySide6.
 
 Renders frameless, transparent, click-through, stay-on-top live subtitles
-positioned over the bottom/middle/top of the screen.
+positioned over the bottom/middle/top of the screen. Supports bilingual
+display (original source text small on top, translated text large below).
 """
-
+import html
 import sys
 import threading
 import time
@@ -24,13 +25,47 @@ except ImportError:
         QT_BINDING = None
 
 
+def wrap_text(text: str, max_chars: int = 42, max_lines: int = 2) -> str:
+    """Wraps text into lines with a maximum character count and line ceiling."""
+    if not text:
+        return ""
+    words = text.strip().split()
+    if not words:
+        return ""
+    lines = []
+    current_line = []
+    current_len = 0
+    for w in words:
+        w_len = len(w)
+        space_len = 1 if current_line else 0
+        if current_line and (current_len + space_len + w_len > max_chars):
+            lines.append(" ".join(current_line))
+            current_line = [w]
+            current_len = w_len
+        else:
+            current_line.append(w)
+            current_len += space_len + w_len
+    if current_line:
+        lines.append(" ".join(current_line))
+    if len(lines) > max_lines:
+        lines = lines[-max_lines:]
+    return "\n".join(lines)
+
+
 class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
     """Frameless, transparent, click-through, stay-on-top Desktop Subtitle Overlay."""
 
-    # Thread-safe Qt signal for receiving text updates from ASR thread
-    update_text_signal = pyqtSignal(str, bool) if QT_BINDING else None
+    # Thread-safe Qt signal supporting 2-arg (legacy) or 3-arg (bilingual) emissions
+    update_text_signal = (
+        pyqtSignal([str, bool], [str, bool, str]) if QT_BINDING else None
+    )
 
-    def __init__(self, font_size_mode: str = "medium", position_mode: str = "bottom"):
+    def __init__(
+        self,
+        font_size_mode: str = "medium",
+        position_mode: str = "bottom",
+        show_source: bool = True,
+    ):
         if not QT_BINDING:
             raise RuntimeError("PyQt6 or PySide6 is required for DesktopSubtitleOverlay.")
 
@@ -38,7 +73,8 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
 
         self.font_size_mode = font_size_mode
         self.position_mode = position_mode
-        self.fade_timeout_ms = 8000  # 8 seconds auto-fade (keeps subtitles clearly visible on CPU)
+        self.show_source = bool(show_source)
+        self.fade_timeout_ms = 8000  # 8 seconds auto-fade
 
         # Window flags for transparent, click-through, stay-on-top overlay
         self.setWindowFlags(
@@ -61,7 +97,8 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
         self.layout.addWidget(self.label)
 
         # Connect thread-safe signal
-        self.update_text_signal.connect(self._on_update_text)
+        self.update_text_signal[str, bool, str].connect(self._on_update_text_with_source)
+        self.update_text_signal[str, bool].connect(self._on_update_text)
 
         # Fade timer
         self.fade_timer = QTimer(self)
@@ -101,8 +138,8 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
         geo = screen.availableGeometry()
         width = int(geo.width() * 0.80)
         # Scale height with font size to prevent multi-line text clipping
-        font_heights = {"small": 120, "medium": 160, "large": 220}
-        height = font_heights.get(self.font_size_mode, 160)
+        font_heights = {"small": 130, "medium": 170, "large": 230}
+        height = font_heights.get(self.font_size_mode, 170)
 
         x = geo.x() + (geo.width() - width) // 2
 
@@ -115,26 +152,60 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
 
         self.setGeometry(x, y, width, height)
 
-    def push_live_text(self, text: str, is_final: bool = False):
+    def push_live_text(self, text: str, is_final: bool = False, source_text: Optional[str] = None):
         """Thread-safe entry point to push live transcript text to the overlay."""
         if QT_BINDING:
-            self.update_text_signal.emit(text, is_final)
+            self.update_text_signal[str, bool, str].emit(text or "", is_final, source_text or "")
 
     @pyqtSlot(str, bool)
     def _on_update_text(self, text: str, is_final: bool):
+        self._on_update_text_with_source(text, is_final, "")
+
+    @pyqtSlot(str, bool, str)
+    def _on_update_text_with_source(self, text: str, is_final: bool, source_text: str = ""):
         """Qt Slot executed on GUI thread to update label text and restart fade timer."""
-        clean_text = text.strip()
-        if not clean_text:
+        clean_text = (text or "").strip()
+        clean_source = (source_text or "").strip()
+
+        if not clean_text and not clean_source:
             self.hide_text()
             return
 
-        self.label.setText(clean_text)
+        font_sizes = {"small": 20, "medium": 28, "large": 36}
+        source_font_sizes = {"small": 14, "medium": 18, "large": 22}
+
+        large_px = font_sizes.get(self.font_size_mode, 28)
+        small_px = source_font_sizes.get(self.font_size_mode, 18)
+
+        wrapped_text = wrap_text(clean_text, max_chars=42, max_lines=2)
+
+        # Bilingual display: source_text small on top, text large below
+        if self.show_source and clean_source and clean_source != clean_text:
+            wrapped_source = wrap_text(clean_source, max_chars=42, max_lines=2)
+            esc_source = html.escape(wrapped_source).replace("\n", "<br>")
+            esc_text = html.escape(wrapped_text).replace("\n", "<br>")
+            html_content = (
+                f'<div align="center">'
+                f'<div style="font-size: {small_px}px; color: #CBD5E1; font-weight: 400; line-height: 1.2; margin-bottom: 4px;">{esc_source}</div>'
+                f'<div style="font-size: {large_px}px; color: #FFFFFF; font-weight: 600; line-height: 1.25;">{esc_text}</div>'
+                f'</div>'
+            )
+            self.label.setText(html_content)
+        else:
+            esc_text = html.escape(wrapped_text).replace("\n", "<br>")
+            html_content = (
+                f'<div align="center">'
+                f'<div style="font-size: {large_px}px; color: #FFFFFF; font-weight: 600; line-height: 1.25;">{esc_text}</div>'
+                f'</div>'
+            )
+            self.label.setText(html_content)
+
         if not self.label.isVisible():
             self.label.show()
         if not self.isVisible():
             self.show()
 
-        # Restart 4-second auto-fade timer on final or streaming update
+        # Restart auto-fade timer on final or partial update
         self.fade_timer.start(self.fade_timeout_ms)
 
     @pyqtSlot()
@@ -154,3 +225,7 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
         """Updates screen position mode ('bottom', 'middle', 'top')."""
         self.position_mode = mode
         self.reposition()
+
+    def set_show_source(self, enable: bool):
+        """Enables or disables showing the source language text on top."""
+        self.show_source = bool(enable)

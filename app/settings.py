@@ -43,6 +43,7 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "device_index": None,
     "asr_mode": os.environ.get("ASR_MODE", "shared"),
     "remote_asr_url": os.environ.get("REMOTE_ASR_URL", "ws://localhost:8765"),
+    "show_source": True,
 }
 
 

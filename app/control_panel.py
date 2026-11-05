@@ -115,12 +115,19 @@ def resolve_model_strategy(
     """Determines the best model, task, language code, and descriptive badges
     based on the user's chosen Audio and Subtitle languages.
     """
+    # Determine target translation language (tgt_lang: en, hi, kn)
+    tgt_lang = None
+    if subtitle_lang in ("en", "hi", "kn"):
+        tgt_lang = subtitle_lang
+    elif subtitle_lang == "same":
+        tgt_lang = audio_lang if audio_lang in ("en", "hi", "kn") else None
+
     # 1. Native Indic Transcription (Hindi / Kannada)
     if subtitle_lang in ("hi", "kn"):
         target_lang = subtitle_lang
         lang_name = "Hindi" if target_lang == "hi" else "Kannada"
 
-        if override_model == "indic":
+        if override_model in ("indic", "auto"):
             chosen_model = "indic"
             use_indic = True
             badge = f"🇮🇳 AI4Bharat IndicConformer ({lang_name})"
@@ -143,6 +150,7 @@ def resolve_model_strategy(
             "indic_lang": target_lang if use_indic else None,
             "asr_language": target_lang,
             "asr_task": "transcribe",
+            "tgt_lang": tgt_lang,
             "badge": badge,
             "description": desc,
             "mode_tag": f"Native {lang_name} Transcription",
@@ -156,6 +164,7 @@ def resolve_model_strategy(
             "indic_lang": None,
             "asr_language": "en",
             "asr_task": "transcribe",
+            "tgt_lang": tgt_lang,
             "badge": f"⚡ {chosen_model} (English Specialist)",
             "description": "Ultra-fast English transcription with Intel CPU INT8 optimization. Lowest latency (< 350ms).",
             "mode_tag": "Direct Transcription",
@@ -171,6 +180,7 @@ def resolve_model_strategy(
             "indic_lang": None,
             "asr_language": lang_hint,
             "asr_task": "translate",
+            "tgt_lang": tgt_lang,
             "badge": f"🌐 {chosen_model} (Live Translation ➔ English)",
             "description": f"Listens to {audio_name} and translates speech into English live subtitles in real time.",
             "mode_tag": "Live Translation",
@@ -186,6 +196,7 @@ def resolve_model_strategy(
             "indic_lang": None,
             "asr_language": lang_hint,
             "asr_task": "transcribe",
+            "tgt_lang": tgt_lang,
             "badge": f"🎯 {chosen_model} (Transcribe in {audio_lang.upper()})",
             "description": f"Transcribes spoken speech directly into native {audio_name} script.",
             "mode_tag": "Direct Transcription",
@@ -198,6 +209,7 @@ def resolve_model_strategy(
         "indic_lang": None,
         "asr_language": None,
         "asr_task": "translate",
+        "tgt_lang": tgt_lang,
         "badge": f"🌐 {chosen_model} (Multilingual)",
         "description": "Balanced multilingual model translating to English.",
         "mode_tag": "Translate",
@@ -393,6 +405,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
     stop_requested = pyqtSignal()
     pause_toggled = pyqtSignal(bool)
     overlay_preview_requested = pyqtSignal(str, str)  # (size, position)
+    show_source_toggled = pyqtSignal(bool) if QT_BINDING else None
     meter_signal = pyqtSignal(float, float, str)
     subtitle_signal = pyqtSignal(str, bool)
 
@@ -414,6 +427,12 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         self.device_list = device_list or []
         self.is_running = False
         self.is_paused = False
+
+        # 5-second silence timeout after speech detected
+        self.speech_timeout_timer = QTimer(self)
+        self.speech_timeout_timer.setSingleShot(True)
+        self.speech_timeout_timer.setInterval(5000)
+        self.speech_timeout_timer.timeout.connect(self._on_speech_timeout)
 
         # Connect internal cross-thread signals
         self.meter_signal.connect(self.update_audio_meter)
@@ -596,6 +615,13 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         overlay_row.addWidget(btn_test_overlay)
         device_layout.addLayout(overlay_row)
 
+        # Bilingual Subtitle Toggle
+        self.chk_show_source = QCheckBox("🔤 Show original spoken text above translation (Bilingual)", device_card)
+        self.chk_show_source.setChecked(bool(self.current_settings.get("show_source", True)))
+        self.chk_show_source.setStyleSheet("color: #E2E8F0; font-weight: 600; padding: 4px 0px;")
+        self.chk_show_source.toggled.connect(self._on_show_source_toggled)
+        device_layout.addWidget(self.chk_show_source)
+
         scroll_layout.addWidget(device_card)
 
         # ── 5. Live Audio Monitor & Subtitle Box ─────────────────────────────
@@ -694,6 +720,18 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         pos = self.combo_pos.currentData()
         self.overlay_preview_requested.emit(size, pos)
 
+    def _on_show_source_toggled(self, checked: bool):
+        """Updates and persists the show_source setting, notifying listeners."""
+        try:
+            from app.settings import load_settings, save_settings
+            st = load_settings()
+            st["show_source"] = bool(checked)
+            save_settings(st)
+        except Exception:
+            pass
+        if hasattr(self, "show_source_toggled") and self.show_source_toggled:
+            self.show_source_toggled.emit(bool(checked))
+
     def _on_start_toggle_clicked(self):
         if not self.is_running:
             # Gather configuration
@@ -707,12 +745,26 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
                 "indic_lang": strategy["indic_lang"],
                 "asr_language": strategy["asr_language"],
                 "asr_task": strategy["asr_task"],
+                "tgt_lang": strategy.get("tgt_lang"),
+                "show_source": self.chk_show_source.isChecked(),
                 "device_index": self.combo_device.currentData(),
                 "font_size": self.combo_font_size.currentData(),
                 "position": self.combo_pos.currentData(),
                 "audio_lang_code": audio_lang,
                 "subtitle_lang_code": sub_lang,
             }
+
+            # Persist choices
+            try:
+                from app.settings import load_settings, save_settings
+                st = load_settings()
+                st["asr_language"] = strategy["asr_language"]
+                st["tgt_lang"] = strategy.get("tgt_lang")
+                st["subtitle_lang"] = strategy.get("tgt_lang")
+                st["show_source"] = self.chk_show_source.isChecked()
+                save_settings(st)
+            except Exception:
+                pass
 
             self.is_running = True
             self.is_paused = False
@@ -740,6 +792,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         else:
             self.is_running = False
             self.is_paused = False
+            self.speech_timeout_timer.stop()
             self.btn_toggle_start.setText("▶  Start Live Subtitles")
             self.btn_toggle_start.setProperty("class", "primary-start")
             self.btn_toggle_start.style().unpolish(self.btn_toggle_start)
@@ -767,6 +820,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         if not self.is_running:
             return
         self.is_paused = not self.is_paused
+        self.speech_timeout_timer.stop()
         if self.is_paused:
             self.btn_pause.setText("▶ Resume")
             self.status_pill.setText("● PAUSED")
@@ -793,13 +847,23 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         if state == "SPEECH":
             self.lbl_vad_state.setText(f"🗣️ Speech Detected ({prob:.0%})")
             self.lbl_vad_state.setStyleSheet("color: #34D399; font-weight: 700;")
+            if not self.speech_timeout_timer.isActive():
+                self.speech_timeout_timer.start(5000)
         else:
-            self.lbl_vad_state.setText(f"Audio Level: {level}%")
-            self.lbl_vad_state.setStyleSheet("color: #94A3B8; font-weight: 500;")
+            if not self.speech_timeout_timer.isActive():
+                self.lbl_vad_state.setText(f"Audio Level: {level}%")
+                self.lbl_vad_state.setStyleSheet("color: #94A3B8; font-weight: 500;")
+
+    def _on_speech_timeout(self):
+        """Called when 5 seconds elapse after speech detection with no subtitle response."""
+        if self.is_running and not self.is_paused:
+            self.lbl_vad_state.setText("⚠️ Speech detected — waiting for server response (>5s)...")
+            self.lbl_vad_state.setStyleSheet("color: #FBBF24; font-weight: 700;")
 
     @pyqtSlot(str, bool)
     def push_live_subtitle(self, text: str, is_final: bool):
         """Displays latest recognized subtitle in the GUI text box."""
+        self.speech_timeout_timer.stop()
         clean = text.strip()
         if not clean:
             return
