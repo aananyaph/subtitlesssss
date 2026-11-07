@@ -52,6 +52,16 @@ class IndicTrans2GPU:
             raise RuntimeError("CUDA is unavailable; IndicTrans2GPU requires an active CUDA GPU.")
 
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        # Compatibility fix: IndicTransToolkit expects PreTrainedTokenizerBase in tokenization_utils
+        try:
+            import transformers.tokenization_utils as _tu
+            import transformers.tokenization_utils_base as _tub
+            if not hasattr(_tu, "PreTrainedTokenizerBase"):
+                _tu.PreTrainedTokenizerBase = _tub.PreTrainedTokenizerBase
+        except Exception:
+            pass
+
         try:
             from IndicTransToolkit import IndicProcessor
         except ImportError as e:
