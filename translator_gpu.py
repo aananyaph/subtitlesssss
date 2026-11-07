@@ -68,6 +68,52 @@ def _apply_transformers_compat_shims():
     except Exception:
         pass
 
+    # 4. Compatibility fix: IndicTransForConditionalGeneration.tie_weights() defines def tie_weights(self):
+    # without **kwargs, but transformers >= 4.45 calls self.tie_weights(recompute_mapping=False).
+    try:
+        import transformers.modeling_utils as _mu
+        if not getattr(_mu.PreTrainedModel, "_patched_tie_weights", False):
+            _orig_post_init = _mu.PreTrainedModel.post_init
+            def _safe_post_init(self):
+                cls = self.__class__
+                if hasattr(cls, "tie_weights"):
+                    orig_tw = cls.tie_weights
+                    if not getattr(orig_tw, "_safe_wrapped", False):
+                        def _wrapped_tie_weights(self, *a, **kw):
+                            try:
+                                return orig_tw(self, *a, **kw)
+                            except TypeError:
+                                return orig_tw(self)
+                        _wrapped_tie_weights._safe_wrapped = True
+                        cls.tie_weights = _wrapped_tie_weights
+                return _orig_post_init(self)
+            _mu.PreTrainedModel.post_init = _safe_post_init
+            _mu.PreTrainedModel._patched_tie_weights = True
+    except Exception:
+        pass
+
+    try:
+        import transformers.dynamic_module_utils as _dmu
+        if not getattr(_dmu, "_patched_tie_weights", False):
+            _orig_get_class = _dmu.get_class_from_dynamic_module
+            def _safe_get_class(*args, **kwargs):
+                cls = _orig_get_class(*args, **kwargs)
+                if isinstance(cls, type) and hasattr(cls, "tie_weights"):
+                    orig_tw = cls.tie_weights
+                    if not getattr(orig_tw, "_safe_wrapped", False):
+                        def _wrapped_tie_weights(self, *a, **kw):
+                            try:
+                                return orig_tw(self, *a, **kw)
+                            except TypeError:
+                                return orig_tw(self)
+                        _wrapped_tie_weights._safe_wrapped = True
+                        cls.tie_weights = _wrapped_tie_weights
+                return cls
+            _dmu.get_class_from_dynamic_module = _safe_get_class
+            _dmu._patched_tie_weights = True
+    except Exception:
+        pass
+
 _apply_transformers_compat_shims()
 
 logger = logging.getLogger("translator_gpu")
@@ -132,12 +178,25 @@ class IndicTrans2GPU:
                 trust_remote_code=True,
                 token=hf_token,
             )
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                repo_id,
-                trust_remote_code=True,
-                torch_dtype=torch.float16,
-                token=hf_token,
-            ).to("cuda").eval()
+            _apply_transformers_compat_shims()
+            try:
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    repo_id,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16,
+                    dtype=torch.float16,
+                    token=hf_token,
+                ).to("cuda").eval()
+            except TypeError as te:
+                if "unexpected keyword argument 'dtype'" in str(te):
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                        repo_id,
+                        trust_remote_code=True,
+                        torch_dtype=torch.float16,
+                        token=hf_token,
+                    ).to("cuda").eval()
+                else:
+                    raise
 
             self.ip = IndicProcessor(inference=True)
 
