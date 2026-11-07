@@ -51,6 +51,23 @@ def _apply_transformers_compat_shims():
     except Exception:
         pass
 
+    # 3. Compatibility fix: IndicTransTokenizer assigns special tokens before super().__init__(),
+    # causing AttributeError on _special_tokens_map in transformers >= 4.45.
+    try:
+        from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+        if not getattr(PreTrainedTokenizerBase, "_patched_special_tokens", False):
+            _orig_setattr = PreTrainedTokenizerBase.__setattr__
+            def _safe_setattr(self, key, value):
+                key_clean = key.removesuffix("_ids").removesuffix("_id") if key.endswith(("_id", "_ids")) else key
+                if key_clean in getattr(self, "SPECIAL_TOKENS_ATTRIBUTES", ()):
+                    if "_special_tokens_map" not in self.__dict__:
+                        self.__dict__["_special_tokens_map"] = {}
+                return _orig_setattr(self, key, value)
+            PreTrainedTokenizerBase.__setattr__ = _safe_setattr
+            PreTrainedTokenizerBase._patched_special_tokens = True
+    except Exception:
+        pass
+
 _apply_transformers_compat_shims()
 
 logger = logging.getLogger("translator_gpu")
