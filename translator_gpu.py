@@ -8,6 +8,26 @@ import logging
 import math
 import os
 import sys
+import types
+
+# Compatibility fix: Hugging Face removed transformers.onnx in newer releases,
+# but IndicTrans2 remote code (configuration_indictrans.py) imports OnnxConfig from it.
+if "transformers.onnx" not in sys.modules:
+    _mock_onnx = types.ModuleType("transformers.onnx")
+    class _OnnxConfig: pass
+    class _OnnxSeq2SeqConfigWithPast(_OnnxConfig): pass
+    _mock_onnx.OnnxConfig = _OnnxConfig
+    _mock_onnx.OnnxSeq2SeqConfigWithPast = _OnnxSeq2SeqConfigWithPast
+    sys.modules["transformers.onnx"] = _mock_onnx
+
+# Compatibility fix: IndicTransToolkit expects PreTrainedTokenizerBase in tokenization_utils
+try:
+    import transformers.tokenization_utils as _tu
+    import transformers.tokenization_utils_base as _tub
+    if not hasattr(_tu, "PreTrainedTokenizerBase"):
+        _tu.PreTrainedTokenizerBase = _tub.PreTrainedTokenizerBase
+except Exception:
+    pass
 
 logger = logging.getLogger("translator_gpu")
 if not logger.handlers:
