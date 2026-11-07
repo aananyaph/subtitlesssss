@@ -64,7 +64,7 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
         self,
         font_size_mode: str = "medium",
         position_mode: str = "bottom",
-        show_source: bool = True,
+        show_source: bool = False,
     ):
         if not QT_BINDING:
             raise RuntimeError("PyQt6 or PySide6 is required for DesktopSubtitleOverlay.")

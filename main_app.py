@@ -744,9 +744,10 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
+    show_source = bool(settings.get("show_source", False))
     # Instantiate Desktop Overlay Window
     overlay = DesktopSubtitleOverlay(
-        font_size_mode=font_size, position_mode=position
+        font_size_mode=font_size, position_mode=position, show_source=show_source
     )
 
     if indic_lang:
@@ -853,6 +854,7 @@ def main():
         overlay.set_position(pos),
         overlay.push_live_text("✨ Live Subtitle Studio: Subtitle overlay preview!", is_final=True)
     ))
+    control_panel.show_source_toggled.connect(overlay.set_show_source)
 
     def open_control_center():
         control_panel.show()

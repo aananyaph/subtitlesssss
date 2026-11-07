@@ -617,7 +617,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
         # Bilingual Subtitle Toggle
         self.chk_show_source = QCheckBox("🔤 Show original spoken text above translation (Bilingual)", device_card)
-        self.chk_show_source.setChecked(bool(self.current_settings.get("show_source", True)))
+        self.chk_show_source.setChecked(bool(self.current_settings.get("show_source", False)))
         self.chk_show_source.setStyleSheet("color: #E2E8F0; font-weight: 600; padding: 4px 0px;")
         self.chk_show_source.toggled.connect(self._on_show_source_toggled)
         device_layout.addWidget(self.chk_show_source)
