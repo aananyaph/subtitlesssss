@@ -10,24 +10,48 @@ import os
 import sys
 import types
 
-# Compatibility fix: Hugging Face removed transformers.onnx in newer releases,
-# but IndicTrans2 remote code (configuration_indictrans.py) imports OnnxConfig from it.
-if "transformers.onnx" not in sys.modules:
-    _mock_onnx = types.ModuleType("transformers.onnx")
-    class _OnnxConfig: pass
-    class _OnnxSeq2SeqConfigWithPast(_OnnxConfig): pass
-    _mock_onnx.OnnxConfig = _OnnxConfig
-    _mock_onnx.OnnxSeq2SeqConfigWithPast = _OnnxSeq2SeqConfigWithPast
-    sys.modules["transformers.onnx"] = _mock_onnx
+# Compatibility fixes for Hugging Face transformers >= 4.45
+# 1. Hugging Face removed transformers.onnx in newer releases, but IndicTrans2
+#    remote code (configuration_indictrans.py) imports OnnxConfig, OnnxSeq2SeqConfigWithPast,
+#    and compute_effective_axis_dimension from transformers.onnx and transformers.onnx.utils.
+# 2. IndicTransToolkit expects PreTrainedTokenizerBase in transformers.tokenization_utils.
+def _apply_transformers_compat_shims():
+    if "transformers.onnx" not in sys.modules or not hasattr(sys.modules.get("transformers.onnx"), "__path__"):
+        mock_onnx = sys.modules.get("transformers.onnx") or types.ModuleType("transformers.onnx")
+        mock_onnx.__path__ = []  # Declares it as a package so submodules can be resolved
+        class _OnnxConfig:
+            default_fixed_batch = 2
+            default_fixed_sequence = 16
+        class _OnnxSeq2SeqConfigWithPast(_OnnxConfig): pass
+        mock_onnx.OnnxConfig = _OnnxConfig
+        mock_onnx.OnnxSeq2SeqConfigWithPast = _OnnxSeq2SeqConfigWithPast
+        sys.modules["transformers.onnx"] = mock_onnx
 
-# Compatibility fix: IndicTransToolkit expects PreTrainedTokenizerBase in tokenization_utils
-try:
-    import transformers.tokenization_utils as _tu
-    import transformers.tokenization_utils_base as _tub
-    if not hasattr(_tu, "PreTrainedTokenizerBase"):
-        _tu.PreTrainedTokenizerBase = _tub.PreTrainedTokenizerBase
-except Exception:
-    pass
+    if "transformers.onnx.utils" not in sys.modules:
+        mock_onnx_utils = types.ModuleType("transformers.onnx.utils")
+        def _compute_effective_axis_dimension(dimension, fixed_dimension=None, num_token_to_add=0):
+            if dimension == -1 or dimension is None:
+                return (fixed_dimension or 1) + (num_token_to_add or 0)
+            return dimension
+        mock_onnx_utils.compute_effective_axis_dimension = _compute_effective_axis_dimension
+        sys.modules["transformers.onnx.utils"] = mock_onnx_utils
+        setattr(sys.modules["transformers.onnx"], "utils", mock_onnx_utils)
+
+    try:
+        import transformers
+        setattr(transformers, "onnx", sys.modules["transformers.onnx"])
+    except Exception:
+        pass
+
+    try:
+        import transformers.tokenization_utils as _tu
+        import transformers.tokenization_utils_base as _tub
+        if not hasattr(_tu, "PreTrainedTokenizerBase"):
+            _tu.PreTrainedTokenizerBase = _tub.PreTrainedTokenizerBase
+    except Exception:
+        pass
+
+_apply_transformers_compat_shims()
 
 logger = logging.getLogger("translator_gpu")
 if not logger.handlers:
@@ -73,14 +97,7 @@ class IndicTrans2GPU:
 
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        # Compatibility fix: IndicTransToolkit expects PreTrainedTokenizerBase in tokenization_utils
-        try:
-            import transformers.tokenization_utils as _tu
-            import transformers.tokenization_utils_base as _tub
-            if not hasattr(_tu, "PreTrainedTokenizerBase"):
-                _tu.PreTrainedTokenizerBase = _tub.PreTrainedTokenizerBase
-        except Exception:
-            pass
+        _apply_transformers_compat_shims()
 
         try:
             from IndicTransToolkit import IndicProcessor
