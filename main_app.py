@@ -794,6 +794,8 @@ def main():
         overlay.set_font_size(req_font_size)
         overlay.set_position(req_pos)
 
+        req_tgt_lang = config.get("tgt_lang")
+
         if req_mode == "shared":
             logging.info(f"[ControlCenter] Launching Remote ASR Client -> {req_remote_url}")
             active_pipeline = RemoteLiveSubtitlePipeline(
@@ -805,7 +807,9 @@ def main():
                     "indic_lang": req_indic,
                     "asr_language": req_asr_lang,
                     "asr_task": req_asr_task,
+                    "tgt_lang": req_tgt_lang,
                 },
+                tgt_lang=req_tgt_lang,
                 meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
                 subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
             )

@@ -30,6 +30,29 @@ MIN_CHUNK_SECONDS = 0.3
 _MODEL = None
 
 
+def _fix_onnx_symlinks(model_id_or_path: str):
+    """Replaces symlinks in Hugging Face cache with real files so ONNX Runtime won't reject external weights."""
+    import os
+    import pathlib
+    import shutil
+    try:
+        cache_root = pathlib.Path(os.path.expanduser("~/.cache/huggingface/hub"))
+        repo_slug = f"models--{model_id_or_path.replace('/', '--')}"
+        model_dir = cache_root / repo_slug
+        if model_dir.exists():
+            for p in list(model_dir.rglob("*")):
+                if p.is_symlink():
+                    try:
+                        target = p.resolve()
+                        if target.is_file():
+                            p.unlink()
+                            shutil.copyfile(target, p)
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+
 # --------------------------------------------------------------------------
 # Model
 # --------------------------------------------------------------------------
@@ -47,6 +70,7 @@ def load_indic_model():
             "onnxruntime onnx"
         ) from e
 
+    _fix_onnx_symlinks(MODEL_ID)
     try:
         _MODEL = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
     except OSError as e:
