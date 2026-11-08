@@ -59,9 +59,13 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         self._settings = dict(settings)
         self._on_saved = on_saved
 
+        from app.control_panel import DARK_STYLESHEET
+        self.setStyleSheet(DARK_STYLESHEET)
+
         form = QFormLayout()
 
         self.model_combo = QComboBox(self)
+        self.model_combo.setAccessibleName("ASR Model Selection")
         self.model_combo.addItem("distil-small.en (Recommended)", "distil-small.en")
         self.model_combo.addItem("tiny.en (Fastest)", "tiny.en")
         self.model_combo.addItem("small.en (More Accurate)", "small.en")
@@ -72,6 +76,7 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         form.addRow("ASR Model", self.model_combo)
 
         self.font_combo = QComboBox(self)
+        self.font_combo.setAccessibleName("Subtitle Font Size")
         self.font_combo.addItem("Small (20px)", "small")
         self.font_combo.addItem("Medium (28px)", "medium")
         self.font_combo.addItem("Large (36px)", "large")
@@ -82,6 +87,7 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         form.addRow("Font Size", self.font_combo)
 
         self.position_combo = QComboBox(self)
+        self.position_combo.setAccessibleName("Subtitle Screen Position")
         self.position_combo.addItem("Bottom", "bottom")
         self.position_combo.addItem("Middle", "middle")
         self.position_combo.addItem("Top", "top")
@@ -92,12 +98,14 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         form.addRow("Subtitle Position", self.position_combo)
 
         self.chunk_floor_spin = QDoubleSpinBox(self)
+        self.chunk_floor_spin.setAccessibleName("Minimum Chunk Floor in Seconds")
         self.chunk_floor_spin.setRange(0.5, 3.0)
         self.chunk_floor_spin.setSingleStep(0.25)
         self.chunk_floor_spin.setValue(float(self._settings.get("min_chunk_floor_sec", 1.0)))
         form.addRow("Min Chunk Floor (s)", self.chunk_floor_spin)
 
         self.stale_timeout_spin = QDoubleSpinBox(self)
+        self.stale_timeout_spin.setAccessibleName("Stale Audio Timeout in Seconds")
         self.stale_timeout_spin.setRange(0.5, 10.0)
         self.stale_timeout_spin.setSingleStep(0.5)
         self.stale_timeout_spin.setValue(float(self._settings.get("stale_audio_timeout_sec", 2.0)))
@@ -105,6 +113,7 @@ class SettingsWindow(QDialog if QT_BINDING else object):
 
         # ASR Inference Mode (Shared Server vs Local Engine)
         self.mode_combo = QComboBox(self)
+        self.mode_combo.setAccessibleName("ASR Inference Mode")
         self.mode_combo.addItem("Shared Inference Server (Team Server)", "shared")
         self.mode_combo.addItem("Local Engine (Docker / Host)", "local")
         mode_idx = self.mode_combo.findData(self._settings.get("asr_mode", "shared"))
@@ -113,17 +122,21 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         form.addRow("Inference Mode", self.mode_combo)
 
         self.remote_url_edit = QLineEdit(self)
+        self.remote_url_edit.setAccessibleName("Remote Inference Server WebSocket URL")
         self.remote_url_edit.setPlaceholderText("ws://shared-ml-server.local:8765")
         self.remote_url_edit.setText(str(self._settings.get("remote_asr_url", "ws://localhost:8765")))
         form.addRow("Server URL", self.remote_url_edit)
 
         restart_note = QLabel("Chunk floor, staleness timeout & inference mode apply on next launch.", self)
-        restart_note.setStyleSheet("color: #888; font-size: 11px;")
+        restart_note.setStyleSheet("color: #9CA3AF; font-size: 11px;")
         form.addRow(restart_note)
 
         self.save_btn = QPushButton("Save Settings", self)
+        self.save_btn.setProperty("class", "primary-start")
+        self.save_btn.setAccessibleName("Save Settings")
         self.save_btn.clicked.connect(self._on_save)
         self.cancel_btn = QPushButton("Cancel", self)
+        self.cancel_btn.setAccessibleName("Cancel Settings Changes")
         self.cancel_btn.clicked.connect(self.reject)
 
         buttons = QHBoxLayout()

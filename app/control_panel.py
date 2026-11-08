@@ -216,77 +216,106 @@ def resolve_model_strategy(
     }
 
 
-# ── Modern Dark Stylesheet ───────────────────────────────────────────────────
+# ── Dark Mode (OLED) Stylesheet ──────────────────────────────────────────────
+# Optimized for OLED displays and low-light environments.
+# Uses true blacks (#000000, #121212, #0A0E27) with high-contrast vibrant accents:
+#   #39FF14 (Neon Green), #0080FF (OLED Blue), #FFD700 (Gold), #BF00FF (Purple)
+# Text: #FFFFFF (Headings/Focus), #9CA3AF (Body text on true black, WCAG AA)
 
 DARK_STYLESHEET = """
+/* Base Window & Global Typography */
 QWidget {
-    background-color: #0B0F19;
-    color: #F8FAFC;
-    font-family: 'Segoe UI', 'Nirmala UI', Arial, sans-serif;
+    background-color: #000000;
+    color: #9CA3AF;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Nirmala UI', Roboto, sans-serif;
     font-size: 13px;
+}
+
+QMainWindow, QDialog {
+    background-color: #000000;
 }
 
 QScrollArea {
     border: none;
-    background-color: transparent;
+    background-color: #000000;
 }
 
 QScrollBar:vertical {
-    background: #0B0F19;
+    background: #000000;
     width: 8px;
     margin: 0px;
     border-radius: 4px;
 }
 QScrollBar::handle:vertical {
-    background: #334155;
-    min-height: 20px;
+    background: #1F2937;
+    min-height: 24px;
     border-radius: 4px;
 }
 QScrollBar::handle:vertical:hover {
-    background: #475569;
+    background: #374151;
 }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
     height: 0px;
 }
 
-/* Card Container */
+/* OLED Cards & Surfaces */
 QFrame.card {
-    background-color: #111827;
+    background-color: #000000;
     border: 1px solid #1F2937;
     border-radius: 12px;
     padding: 14px;
 }
+QFrame.card:hover {
+    border-color: #374151;
+}
 
 QFrame.highlight-card {
-    background-color: #131E33;
-    border: 1px solid #1E3A8A;
+    background-color: #0A0E27;
+    border: 1px solid #1F2937;
     border-radius: 12px;
     padding: 14px;
 }
+QFrame.highlight-card:hover {
+    border-color: #0080FF;
+}
 
-/* Typography */
+/* Typography & Headings */
 QLabel.heading {
-    font-size: 18px;
+    font-size: 19px;
     font-weight: 700;
     color: #FFFFFF;
 }
 
 QLabel.subheading {
     font-size: 13px;
-    font-weight: 600;
-    color: #94A3B8;
+    font-weight: 500;
+    color: #9CA3AF;
 }
 
 QLabel.card-title {
     font-size: 14px;
     font-weight: 700;
-    color: #38BDF8;
+    color: #FFFFFF;
+}
+
+/* Accents */
+.accent-green {
+    color: #39FF14;
+}
+.accent-blue {
+    color: #0080FF;
+}
+.accent-gold {
+    color: #FFD700;
+}
+.accent-purple {
+    color: #BF00FF;
 }
 
 QLabel.badge {
-    background-color: #1E293B;
-    color: #38BDF8;
-    border: 1px solid #334155;
+    background-color: #0A0E27;
+    color: #0080FF;
+    border: 1px solid #1F2937;
     border-radius: 6px;
     padding: 3px 8px;
     font-size: 11px;
@@ -295,40 +324,63 @@ QLabel.badge {
 
 /* Inputs & Combos */
 QComboBox {
-    background-color: #1F2937;
-    color: #F8FAFC;
-    border: 1px solid #374151;
+    background-color: #121212;
+    color: #FFFFFF;
+    border: 1px solid #1F2937;
     border-radius: 8px;
     padding: 9px 12px;
     font-size: 13px;
     min-height: 20px;
 }
 QComboBox:hover {
-    border-color: #38BDF8;
-    background-color: #273549;
+    border-color: #374151;
+    background-color: #181818;
 }
 QComboBox:focus {
-    border-color: #0284C7;
+    border: 2px solid #0080FF;
 }
 QComboBox::drop-down {
     border: none;
     width: 28px;
 }
 QComboBox QAbstractItemView {
-    background-color: #1F2937;
-    color: #F8FAFC;
-    selection-background-color: #0284C7;
+    background-color: #121212;
+    color: #FFFFFF;
+    selection-background-color: #0080FF;
     selection-color: #FFFFFF;
-    border: 1px solid #374151;
-    border-radius: 6px;
+    border: 1px solid #1F2937;
+    border-radius: 8px;
     outline: none;
     padding: 4px;
 }
 
+/* CheckBox */
+QCheckBox {
+    color: #9CA3AF;
+    spacing: 8px;
+}
+QCheckBox:hover {
+    color: #FFFFFF;
+}
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid #1F2937;
+    background-color: #121212;
+}
+QCheckBox::indicator:hover {
+    border-color: #374151;
+}
+QCheckBox::indicator:checked {
+    background-color: #39FF14;
+    border-color: #39FF14;
+}
+
 /* Buttons */
 QPushButton {
-    background-color: #1F2937;
-    color: #F8FAFC;
+    background-color: #121212;
+    color: #FFFFFF;
     border: 1px solid #374151;
     border-radius: 8px;
     padding: 8px 16px;
@@ -336,62 +388,87 @@ QPushButton {
     font-weight: 600;
 }
 QPushButton:hover {
-    background-color: #374151;
-    border-color: #4B5563;
+    border-color: #0080FF;
+    background-color: #1A1A1A;
 }
 QPushButton:pressed {
-    background-color: #111827;
+    background-color: #000000;
+}
+QPushButton:focus {
+    outline: 2px solid #FFFFFF;
+    border-color: #FFFFFF;
 }
 
+/* Primary Start Button: High-Contrast OLED Neon Green */
 QPushButton.primary-start {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10B981, stop:1 #059669);
-    color: #FFFFFF;
-    border: none;
+    background-color: #39FF14;
+    color: #000000;
+    border: 1px solid #39FF14;
     font-size: 15px;
     font-weight: 700;
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 13px 24px;
 }
 QPushButton.primary-start:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #34D399, stop:1 #10B981);
+    background-color: #45FF24;
+    border-color: #FFFFFF;
+}
+QPushButton.primary-start:pressed {
+    background-color: #2ED610;
+}
+QPushButton.primary-start:focus {
+    outline: 2px solid #FFFFFF;
+    border-color: #FFFFFF;
 }
 
+/* Primary Stop Button: High-Contrast OLED Red */
 QPushButton.primary-stop {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #EF4444, stop:1 #DC2626);
+    background-color: #FF0033;
     color: #FFFFFF;
-    border: none;
+    border: 1px solid #FF0033;
     font-size: 15px;
     font-weight: 700;
-    border-radius: 10px;
+    border-radius: 8px;
     padding: 13px 24px;
 }
 QPushButton.primary-stop:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #F87171, stop:1 #EF4444);
+    background-color: #FF2E54;
+    border-color: #FFFFFF;
+}
+QPushButton.primary-stop:pressed {
+    background-color: #D60029;
+}
+QPushButton.primary-stop:focus {
+    outline: 2px solid #FFFFFF;
+    border-color: #FFFFFF;
 }
 
-/* Audio Level Progress Bar */
+/* Audio Level Progress Bar (VU Meter) */
 QProgressBar.vu-meter {
-    background-color: #1F2937;
-    border: 1px solid #374151;
+    background-color: #121212;
+    border: 1px solid #1F2937;
     border-radius: 5px;
     height: 10px;
     text-align: center;
 }
 QProgressBar.vu-meter::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #10B981, stop:0.7 #F59E0B, stop:1 #EF4444);
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0080FF, stop:0.6 #39FF14, stop:0.85 #FFD700, stop:1 #FF0033);
     border-radius: 4px;
 }
 
-/* Live Text Box */
+/* Code & Live Text Box */
 QTextEdit.live-box {
-    background-color: #060911;
-    color: #E2E8F0;
-    border: 1px solid #1E293B;
+    background-color: #121212;
+    color: #9CA3AF;
+    border: 1px solid #1F2937;
     border-radius: 8px;
     padding: 10px;
-    font-family: 'Segoe UI', sans-serif;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
     font-size: 13px;
     line-height: 1.4;
+}
+QTextEdit.live-box:focus {
+    border-color: #374151;
 }
 """
 
@@ -461,8 +538,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
         self.status_pill = QLabel("● IDLE", self)
         self.status_pill.setStyleSheet(
-            "background-color: #1E293B; color: #94A3B8; font-weight: 700; "
-            "padding: 6px 14px; border-radius: 12px; border: 1px solid #334155; font-size: 12px;"
+            "background-color: #121212; color: #9CA3AF; font-weight: 700; "
+            "padding: 6px 14px; border-radius: 12px; border: 1px solid #1F2937; font-size: 12px;"
         )
 
         header.addLayout(header_info)
@@ -495,24 +572,26 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         # Column Left: Spoken Audio
         left_col = QVBoxLayout()
         left_label = QLabel("Spoken Audio Language (Input):", lang_card)
-        left_label.setStyleSheet("font-weight: 600; color: #E2E8F0;")
+        left_label.setStyleSheet("font-weight: 600; color: #FFFFFF;")
         self.combo_audio_lang = QComboBox(lang_card)
+        self.combo_audio_lang.setAccessibleName("Spoken Audio Language")
         for code, label, _ in AUDIO_LANGUAGES:
             self.combo_audio_lang.addItem(label, code)
         self.combo_audio_lang.currentIndexChanged.connect(self._on_language_changed)
         left_col.addWidget(left_label)
         left_col.addWidget(self.combo_audio_lang)
 
-        # Arrow icon
+        # Arrow icon with OLED Blue accent
         arrow_lbl = QLabel("➔", lang_card)
-        arrow_lbl.setStyleSheet("font-size: 20px; font-weight: 900; color: #38BDF8; padding-top: 18px;")
+        arrow_lbl.setStyleSheet("font-size: 20px; font-weight: 900; color: #0080FF; padding-top: 18px;")
         arrow_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # Column Right: Subtitle Output
         right_col = QVBoxLayout()
         right_label = QLabel("Live Subtitles Language (Output):", lang_card)
-        right_label.setStyleSheet("font-weight: 600; color: #E2E8F0;")
+        right_label.setStyleSheet("font-weight: 600; color: #FFFFFF;")
         self.combo_sub_lang = QComboBox(lang_card)
+        self.combo_sub_lang.setAccessibleName("Live Subtitles Output Language")
         for code, label, _ in SUBTITLE_LANGUAGES:
             self.combo_sub_lang.addItem(label, code)
         self.combo_sub_lang.currentIndexChanged.connect(self._on_language_changed)
@@ -533,17 +612,17 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         model_hdr = QHBoxLayout()
         self.lbl_model_badge = QLabel("⚡ distil-small.en", self.model_card)
         self.lbl_model_badge.setStyleSheet(
-            "background-color: #0369A1; color: #E0F2FE; font-weight: 700; "
-            "padding: 4px 10px; border-radius: 6px; font-size: 12px;"
+            "background-color: #0A0E27; color: #0080FF; font-weight: 700; "
+            "padding: 4px 10px; border-radius: 6px; border: 1px solid #1F2937; font-size: 12px;"
         )
         self.lbl_mode_tag = QLabel("[Direct Transcription]", self.model_card)
-        self.lbl_mode_tag.setStyleSheet("color: #38BDF8; font-weight: 600; font-size: 11px;")
+        self.lbl_mode_tag.setStyleSheet("color: #BF00FF; font-weight: 700; font-size: 11px;")
         model_hdr.addWidget(self.lbl_model_badge)
         model_hdr.addWidget(self.lbl_mode_tag)
         model_hdr.addStretch()
 
         self.lbl_model_desc = QLabel("Loading model routing explanation...", self.model_card)
-        self.lbl_model_desc.setStyleSheet("color: #CBD5E1; font-size: 12px;")
+        self.lbl_model_desc.setStyleSheet("color: #9CA3AF; font-size: 12px;")
         self.lbl_model_desc.setWordWrap(True)
 
         model_layout.addLayout(model_hdr)
@@ -552,8 +631,9 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         # Advanced Model Override
         override_layout = QHBoxLayout()
         override_lbl = QLabel("Model Engine Override:", self.model_card)
-        override_lbl.setStyleSheet("color: #94A3B8; font-size: 11px;")
+        override_lbl.setStyleSheet("color: #9CA3AF; font-size: 11px;")
         self.combo_model_override = QComboBox(self.model_card)
+        self.combo_model_override.setAccessibleName("Model Engine Override")
         for code, name in MODEL_CHOICES:
             self.combo_model_override.addItem(name, code)
         self.combo_model_override.currentIndexChanged.connect(self._on_language_changed)
@@ -577,11 +657,14 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         # Audio Device Selector with Refresh
         dev_row = QHBoxLayout()
         dev_lbl = QLabel("Playback Device (Loopback):", device_card)
-        dev_lbl.setStyleSheet("font-weight: 600; color: #E2E8F0;")
+        dev_lbl.setStyleSheet("font-weight: 600; color: #FFFFFF;")
         self.combo_device = QComboBox(device_card)
+        self.combo_device.setAccessibleName("Audio Playback Device for Loopback Capture")
         self._populate_devices()
 
         btn_refresh_dev = QPushButton("🔄", device_card)
+        btn_refresh_dev.setAccessibleName("Refresh Audio Devices")
+        btn_refresh_dev.setAccessibleDescription("Refreshes the list of available audio playback devices")
         btn_refresh_dev.setToolTip("Refresh Audio Devices")
         btn_refresh_dev.setFixedWidth(36)
         btn_refresh_dev.clicked.connect(self.refresh_devices)
@@ -595,17 +678,20 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         overlay_row = QHBoxLayout()
         size_lbl = QLabel("Font Size:", device_card)
         self.combo_font_size = QComboBox(device_card)
+        self.combo_font_size.setAccessibleName("Subtitle Font Size")
         self.combo_font_size.addItem("Medium (28px)", "medium")
         self.combo_font_size.addItem("Small (20px)", "small")
         self.combo_font_size.addItem("Large (36px)", "large")
 
         pos_lbl = QLabel("Screen Position:", device_card)
         self.combo_pos = QComboBox(device_card)
+        self.combo_pos.setAccessibleName("Subtitle Screen Position")
         self.combo_pos.addItem("Bottom (Default)", "bottom")
         self.combo_pos.addItem("Top", "top")
         self.combo_pos.addItem("Middle", "middle")
 
         btn_test_overlay = QPushButton("👁 Test Overlay", device_card)
+        btn_test_overlay.setAccessibleName("Test Subtitle Overlay Display")
         btn_test_overlay.clicked.connect(self._test_overlay)
 
         overlay_row.addWidget(size_lbl)
@@ -618,7 +704,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         # Bilingual Subtitle Toggle
         self.chk_show_source = QCheckBox("🔤 Show original spoken text above translation (Bilingual)", device_card)
         self.chk_show_source.setChecked(bool(self.current_settings.get("show_source", False)))
-        self.chk_show_source.setStyleSheet("color: #E2E8F0; font-weight: 600; padding: 4px 0px;")
+        self.chk_show_source.setStyleSheet("color: #9CA3AF; font-weight: 600; padding: 4px 0px;")
         self.chk_show_source.toggled.connect(self._on_show_source_toggled)
         device_layout.addWidget(self.chk_show_source)
 
@@ -634,7 +720,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         mon_title = QLabel("📊 Live Audio Monitor & Subtitle Feed", mon_card)
         mon_title.setProperty("class", "card-title")
         self.lbl_vad_state = QLabel("Audio: Silent", mon_card)
-        self.lbl_vad_state.setStyleSheet("color: #94A3B8; font-weight: 600; font-size: 11px;")
+        self.lbl_vad_state.setStyleSheet("color: #9CA3AF; font-weight: 600; font-size: 11px;")
         mon_title_row.addWidget(mon_title)
         mon_title_row.addStretch()
         mon_title_row.addWidget(self.lbl_vad_state)
@@ -668,13 +754,16 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
         self.btn_toggle_start = QPushButton("▶  Start Live Subtitles", self)
         self.btn_toggle_start.setProperty("class", "primary-start")
+        self.btn_toggle_start.setAccessibleName("Toggle Live Subtitles")
         self.btn_toggle_start.clicked.connect(self._on_start_toggle_clicked)
 
         self.btn_pause = QPushButton("⏸ Pause", self)
         self.btn_pause.setEnabled(False)
+        self.btn_pause.setAccessibleName("Pause or Resume Live Subtitles")
         self.btn_pause.clicked.connect(self._on_pause_clicked)
 
         self.btn_minimize = QPushButton("🗕 Hide to Tray", self)
+        self.btn_minimize.setAccessibleName("Hide Control Panel to System Tray")
         self.btn_minimize.clicked.connect(self.hide)
 
         action_bar.addWidget(self.btn_toggle_start, 3)
@@ -778,8 +867,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
             self.status_pill.setText("● ACTIVE: LISTENING")
             self.status_pill.setStyleSheet(
-                "background-color: #064E3B; color: #34D399; font-weight: 700; "
-                "padding: 6px 14px; border-radius: 12px; border: 1px solid #059669; font-size: 12px;"
+                "background-color: #000000; color: #39FF14; font-weight: 700; "
+                "padding: 6px 14px; border-radius: 12px; border: 1px solid #39FF14; font-size: 12px;"
             )
 
             # Lock inputs while active
@@ -804,8 +893,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
             self.status_pill.setText("● IDLE")
             self.status_pill.setStyleSheet(
-                "background-color: #1E293B; color: #94A3B8; font-weight: 700; "
-                "padding: 6px 14px; border-radius: 12px; border: 1px solid #334155; font-size: 12px;"
+                "background-color: #121212; color: #9CA3AF; font-weight: 700; "
+                "padding: 6px 14px; border-radius: 12px; border: 1px solid #1F2937; font-size: 12px;"
             )
 
             # Unlock inputs
@@ -825,15 +914,15 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
             self.btn_pause.setText("▶ Resume")
             self.status_pill.setText("● PAUSED")
             self.status_pill.setStyleSheet(
-                "background-color: #78350F; color: #FCD34D; font-weight: 700; "
-                "padding: 6px 14px; border-radius: 12px; border: 1px solid #D97706; font-size: 12px;"
+                "background-color: #000000; color: #FFD700; font-weight: 700; "
+                "padding: 6px 14px; border-radius: 12px; border: 1px solid #FFD700; font-size: 12px;"
             )
         else:
             self.btn_pause.setText("⏸ Pause")
             self.status_pill.setText("● ACTIVE: LISTENING")
             self.status_pill.setStyleSheet(
-                "background-color: #064E3B; color: #34D399; font-weight: 700; "
-                "padding: 6px 14px; border-radius: 12px; border: 1px solid #059669; font-size: 12px;"
+                "background-color: #000000; color: #39FF14; font-weight: 700; "
+                "padding: 6px 14px; border-radius: 12px; border: 1px solid #39FF14; font-size: 12px;"
             )
         self.pause_toggled.emit(not self.is_paused)
 
@@ -846,19 +935,19 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         self.vu_bar.setValue(level)
         if state == "SPEECH":
             self.lbl_vad_state.setText(f"🗣️ Speech Detected ({prob:.0%})")
-            self.lbl_vad_state.setStyleSheet("color: #34D399; font-weight: 700;")
+            self.lbl_vad_state.setStyleSheet("color: #39FF14; font-weight: 700;")
             if not self.speech_timeout_timer.isActive():
                 self.speech_timeout_timer.start(5000)
         else:
             if not self.speech_timeout_timer.isActive():
                 self.lbl_vad_state.setText(f"Audio Level: {level}%")
-                self.lbl_vad_state.setStyleSheet("color: #94A3B8; font-weight: 500;")
+                self.lbl_vad_state.setStyleSheet("color: #9CA3AF; font-weight: 500;")
 
     def _on_speech_timeout(self):
         """Called when 5 seconds elapse after speech detection with no subtitle response."""
         if self.is_running and not self.is_paused:
             self.lbl_vad_state.setText("⚠️ Speech detected — waiting for server response (>5s)...")
-            self.lbl_vad_state.setStyleSheet("color: #FBBF24; font-weight: 700;")
+            self.lbl_vad_state.setStyleSheet("color: #FFD700; font-weight: 700;")
 
     @pyqtSlot(str, bool)
     def push_live_subtitle(self, text: str, is_final: bool):
