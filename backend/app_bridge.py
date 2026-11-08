@@ -79,6 +79,47 @@ class BridgeOverlay:
             "is_final": is_final,
         })
 
+# ---------- Dynamic ASR config (from client HANDSHAKE) ----------
+_current_cfg_key = None
+
+def apply_asr_config(cfg):
+    """Rebuild pipeline to match client's audio/subtitle language choice."""
+    global pipeline, _current_cfg_key
+    key = (
+        cfg.get("model_name") or "base",
+        cfg.get("indic_lang") or None,
+        cfg.get("asr_language") or None,
+        cfg.get("asr_task") or None,
+    )
+    if pipeline is not None and key == _current_cfg_key:
+        logging.info(f"[Bridge] ASR config unchanged {key}; keeping pipeline")
+        return
+    logging.info(f"[Bridge] Switching ASR config -> model={key[0]} indic={key[1]} lang={key[2]} task={key[3]}")
+    import main_app
+    old = pipeline
+    if old is not None:
+        try:
+            old.stop()
+        except Exception as e:
+            logging.warning(f"[Bridge] old pipeline stop failed: {e}")
+    if key[1]:
+        from indic_backend import load_indic_model
+        load_indic_model()
+    new = main_app.DesktopLiveSubtitlePipeline(
+        overlay=BridgeOverlay(),
+        model_name=key[0],
+        indic_lang=key[1],
+        asr_language=key[2],
+        asr_task=key[3],
+    )
+    try:
+        new.start()
+    except Exception as e:
+        logging.warning(f"[Bridge] new pipeline start failed (no audio device?) {e}")
+    pipeline = new
+    _current_cfg_key = key
+    logging.info("[Bridge] ASR config applied")
+
 # ---------- WebSocket handler ----------
 async def handle_client(ws):
     global pipeline
@@ -99,6 +140,13 @@ async def handle_client(ws):
                 t = data.get("type")
                 if t == "HANDSHAKE":
                     logging.info(f"[Bridge] HANDSHAKE {data}")
+                    _cfg = data.get("asrConfig")
+                    if _cfg:
+                        try:
+                            await asyncio.get_running_loop().run_in_executor(None, apply_asr_config, _cfg)
+                        except Exception as e:
+                            logging.error(f"[Bridge] apply_asr_config failed: {e}", exc_info=True)
+                            await ws.send(json.dumps({"type": "final", "text": f"Server model load failed: {e}", "is_final": True}))
                     if pipeline and hasattr(pipeline, 'preprocessor'):
                         sr = data.get("sampleRate", 48000)
                         ch = data.get("numChannels", 2)
