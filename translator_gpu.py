@@ -114,6 +114,45 @@ def _apply_transformers_compat_shims():
     except Exception:
         pass
 
+    # 5. Compatibility fix for transformers >= 4.36 / 4.45+:
+    # IndicTrans remote code indexes past_key_values (e.g. past_key_values[0]),
+    # but modern transformers passes an EncoderDecoderCache object which lacks __getitem__.
+    try:
+        import transformers.cache_utils as _tcu
+        if hasattr(_tcu, "EncoderDecoderCache"):
+            _EDC = _tcu.EncoderDecoderCache
+            if not getattr(_EDC, "_patched_legacy", False):
+                def _safe_edc_getitem(self, idx):
+                    if hasattr(self, "to_legacy_cache"):
+                        return self.to_legacy_cache()[idx]
+                    raise TypeError(f"'{self.__class__.__name__}' object is not subscriptable")
+                _EDC.__getitem__ = _safe_edc_getitem
+                if not hasattr(_EDC, "__iter__"):
+                    _EDC.__iter__ = lambda self: iter(self.to_legacy_cache()) if hasattr(self, "to_legacy_cache") else iter(())
+                if not hasattr(_EDC, "__len__"):
+                    _EDC.__len__ = lambda self: len(self.to_legacy_cache()) if hasattr(self, "to_legacy_cache") else 0
+                _EDC._patched_legacy = True
+    except Exception:
+        pass
+
+
+def free_host_memory():
+    """Forces Python garbage collection, CUDA cache release, and Linux glibc heap trimming."""
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 _apply_transformers_compat_shims()
 
 logger = logging.getLogger("translator_gpu")
@@ -184,20 +223,18 @@ class IndicTrans2GPU:
                     repo_id,
                     trust_remote_code=True,
                     torch_dtype=torch.float16,
-                    dtype=torch.float16,
+                    low_cpu_mem_usage=True,
                     token=hf_token,
                 ).to("cuda").eval()
             except TypeError as te:
-                if "unexpected keyword argument 'dtype'" in str(te):
-                    self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                        repo_id,
-                        trust_remote_code=True,
-                        torch_dtype=torch.float16,
-                        token=hf_token,
-                    ).to("cuda").eval()
-                else:
-                    raise
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    repo_id,
+                    trust_remote_code=True,
+                    torch_dtype=torch.float16,
+                    token=hf_token,
+                ).to("cuda").eval()
 
+            free_host_memory()
             self.ip = IndicProcessor(inference=True)
 
             vram_mb = torch.cuda.memory_allocated() / (1024.0 * 1024.0)
@@ -207,9 +244,11 @@ class IndicTrans2GPU:
             self._warm_up()
         except torch.cuda.OutOfMemoryError as oom:
             torch.cuda.empty_cache()
+            free_host_memory()
             logger.error(f"[IndicTrans2GPU] CUDA OOM while loading {repo_id}: {oom}")
             raise RuntimeError(f"CUDA OOM loading {repo_id}: {oom}") from oom
         except Exception as exc:
+            free_host_memory()
             logger.error(f"[IndicTrans2GPU] Failed loading {repo_id}: {exc}", exc_info=True)
             raise
 
@@ -255,7 +294,7 @@ class IndicTrans2GPU:
             max_new_tokens = math.ceil(tr_max_ratio * src_tokens) + 8
 
             gen_kwargs = {
-                "use_cache": True,
+                "use_cache": False,
                 "max_new_tokens": max_new_tokens,
                 "num_beams": tr_beams,
             }
@@ -271,6 +310,7 @@ class IndicTrans2GPU:
 
         except torch.cuda.OutOfMemoryError as oom:
             torch.cuda.empty_cache()
+            free_host_memory()
             logger.error(f"[IndicTrans2GPU] CUDA OOM during translate(): {oom}")
             raise RuntimeError(f"CUDA OOM during translate: {oom}") from oom
 

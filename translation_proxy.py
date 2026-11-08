@@ -51,7 +51,7 @@ log = logging.getLogger("tproxy")
 
 # ---------------------------------------------------------------- translator
 _tr_lock = threading.Lock()
-_model_cache = OrderedDict()  # (backend_tag, repo_id) -> model instance (max 2 resident)
+_model_cache = OrderedDict()  # (backend_tag, repo_id) -> model instance (max resident models)
 _text_cache = OrderedDict()   # (src, tgt, text) -> translated_text (max 512 entries)
 _pivot_logged = False
 
@@ -72,19 +72,29 @@ def _repo_for_gpu(src, tgt):
     return "ai4bharat/indictrans2-indic-indic-1B"
 
 
+def _free_system_memory():
+    """Immediately force OS and GPU to release all cached/fragmented memory."""
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    try:
+        import ctypes
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except Exception:
+        pass
+
+
 def _evict_oldest_model_if_needed():
     """Caller must hold _tr_lock."""
     while len(_model_cache) > MAX_RESIDENT_MODELS:
         old_key, old_model = _model_cache.popitem(last=False)
         del old_model
-        gc.collect()
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except Exception:
-            pass
-        log.info(f"Evicted model {old_key} from resident cache (max={MAX_RESIDENT_MODELS})")
+        _free_system_memory()
+        log.info(f"Evicted model {old_key} from resident cache; purged RAM & VRAM (max={MAX_RESIDENT_MODELS})")
 
 
 def _get_model(src, tgt, target_backend=None):
