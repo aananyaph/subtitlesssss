@@ -30,18 +30,28 @@ MIN_CHUNK_SECONDS = 0.3
 _MODEL = None
 
 
-def _fix_onnx_symlinks(model_id_or_path: str):
-    """Replaces symlinks in Hugging Face cache with real files so ONNX Runtime won't reject external weights."""
+def _fix_onnx_symlinks(model_id_or_path: str = None):
+    """Replaces symlinks in Hugging Face cache with real physical files so ONNX Runtime won't reject external weights."""
     import os
     import pathlib
     import shutil
     try:
-        cache_root = pathlib.Path(os.path.expanduser("~/.cache/huggingface/hub"))
-        repo_slug = f"models--{model_id_or_path.replace('/', '--')}"
-        model_dir = cache_root / repo_slug
-        if model_dir.exists():
-            for p in list(model_dir.rglob("*")):
-                if p.is_symlink():
+        cache_roots = [
+            pathlib.Path(os.path.expanduser("~/.cache/huggingface/hub")),
+            pathlib.Path("/root/.cache/huggingface/hub"),
+            pathlib.Path("/root/.cache/huggingface"),
+        ]
+        if "HF_HOME" in os.environ:
+            cache_roots.append(pathlib.Path(os.environ["HF_HOME"]) / "hub")
+            cache_roots.append(pathlib.Path(os.environ["HF_HOME"]))
+        
+        seen = set()
+        for root in cache_roots:
+            if not root.exists():
+                continue
+            for p in list(root.rglob("*")):
+                if p.is_symlink() and str(p) not in seen:
+                    seen.add(str(p))
                     try:
                         target = p.resolve()
                         if target.is_file():
