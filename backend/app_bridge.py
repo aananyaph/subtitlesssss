@@ -201,19 +201,20 @@ async def main_async(args):
     event_loop = asyncio.get_running_loop()
 
     overlay = BridgeOverlay()
-    pipeline = create_pipeline(args.model, overlay)
-    # Also broadcast diagnostics periodically (meter)
-    # Start pipeline worker (non-Qt path) — it starts WASAPI thread
-    try:
-        pipeline.start()
-        logging.info("[Bridge] Pipeline started (WASAPI loopback active if device present)")
-    except Exception as e:
-        logging.warning(f"[Bridge] Pipeline start failed (no audio device?) {e}. Continuing WS-only mode.")
+    if args.model and args.model.lower() not in ("none", "lazy"):
+        try:
+            pipeline = create_pipeline(args.model, overlay)
+            try:
+                pipeline.start()
+                logging.info("[Bridge] Pipeline started (WASAPI loopback active if device present)")
+            except Exception as e:
+                logging.warning(f"[Bridge] Pipeline start failed (no audio device?) {e}. Continuing WS-only mode.")
+        except Exception as e:
+            logging.warning(f"[Bridge] Initial pipeline creation deferred: {e}")
 
-    # Start WS server
-    logging.info(f"[Bridge] Serving on ws://{args.host}:{args.port} — Electron connect there")
+    # Start WS server immediately so port binds with 0 latency
+    logging.info(f"[Bridge] Serving on ws://{args.host}:{args.port} — ready for client connection")
     async with websockets.serve(handle_client, args.host, args.port, max_size=None):
-        # Also broadcast a periodic heartbeat
         while True:
             await asyncio.sleep(1)
 

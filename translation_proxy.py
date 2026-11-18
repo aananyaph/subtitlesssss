@@ -387,8 +387,29 @@ async def handler(client):
     q = asyncio.Queue()
     log.info("client connected")
     tasks = []
+    up = None
+    # Retry connecting to upstream up to 10 times (5 seconds total)
+    for attempt in range(10):
+        try:
+            up = await connect(UPSTREAM, max_size=None, compression=None)
+            break
+        except Exception as e:
+            if attempt < 9:
+                await asyncio.sleep(0.5)
+            else:
+                log.error(f"Could not connect to upstream ASR bridge at {UPSTREAM}: {e}")
+                try:
+                    await client.send(json.dumps({
+                        "type": "final",
+                        "text": f"Server error: could not connect to ASR bridge at {UPSTREAM} ({e})",
+                        "is_final": True
+                    }))
+                except Exception:
+                    pass
+                return
+
     try:
-        async with connect(UPSTREAM, max_size=None, compression=None) as up:
+        async with up:
             tasks = [asyncio.create_task(client_to_up(client, up, state)),
                      asyncio.create_task(up_to_client(client, up, state, q)),
                      asyncio.create_task(translate_worker(client, state, q))]
