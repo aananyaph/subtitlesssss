@@ -24,6 +24,10 @@ import time
 from typing import Set
 
 import websockets
+try:
+    from websockets.asyncio.server import serve
+except ImportError:
+    from websockets.server import serve
 
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -121,7 +125,7 @@ def apply_asr_config(cfg):
     logging.info("[Bridge] ASR config applied")
 
 # ---------- WebSocket handler ----------
-async def handle_client(ws):
+async def handle_client(ws, *args, **kwargs):
     global pipeline
     logging.info(f"[Bridge] Client connected {ws.remote_address}")
     connected.add(ws)
@@ -214,7 +218,7 @@ async def main_async(args):
 
     # Start WS server immediately so port binds with 0 latency
     logging.info(f"[Bridge] Serving on ws://{args.host}:{args.port} — ready for client connection")
-    async with websockets.serve(handle_client, args.host, args.port, max_size=None):
+    async with serve(handle_client, args.host, args.port, max_size=None):
         while True:
             await asyncio.sleep(1)
 
