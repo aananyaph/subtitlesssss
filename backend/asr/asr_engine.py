@@ -74,6 +74,7 @@ class FasterWhisperEngine(BaseASREngine):
 
         try:
             import os
+            from faster_whisper import WhisperModel
             # Cap at 4 threads to prevent 100% CPU lockup and maintain responsiveness for OS/audio/UI
             num_threads = min(4, os.cpu_count() or 4)
             self.model = WhisperModel(
