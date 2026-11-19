@@ -172,18 +172,21 @@ def resolve_model_strategy(
 
     # 3. Foreign / Auto audio -> English subtitles (Live Translation)
     if subtitle_lang == "en":
-        chosen_model = "base" if override_model == "auto" else override_model
+        is_indic = audio_lang in ("hi", "kn")
+        chosen_model = "indic" if (is_indic and override_model in ("auto", "indic")) else ("small" if override_model == "auto" else override_model)
         lang_hint = None if audio_lang == "auto" else audio_lang
         audio_name = next((name for code, name, _ in AUDIO_LANGUAGES if code == audio_lang), audio_lang)
+        badge = f"🇮🇳 AI4Bharat IndicConformer ➔ English" if (is_indic and chosen_model == "indic") else f"🌐 {chosen_model} (Live Translation ➔ English)"
+        desc = f"Listens to {audio_name} with AI4Bharat IndicConformer (600M) and translates into English via IndicTrans2." if (is_indic and chosen_model == "indic") else f"Listens to {audio_name} and translates speech into English live subtitles in real time."
         return {
             "model_name": chosen_model,
-            "indic_lang": None,
+            "indic_lang": audio_lang if (is_indic and chosen_model == "indic") else None,
             "asr_language": lang_hint,
-            "asr_task": "translate",
+            "asr_task": "transcribe" if is_indic else "translate",
             "tgt_lang": tgt_lang,
-            "badge": f"🌐 {chosen_model} (Live Translation ➔ English)",
-            "description": f"Listens to {audio_name} and translates speech into English live subtitles in real time.",
-            "mode_tag": "Live Translation",
+            "badge": badge,
+            "description": desc,
+            "mode_tag": "AI4Bharat Translation" if is_indic else "Live Translation",
         }
 
     # 4. Foreign audio -> Same foreign language (Native Transcription)
