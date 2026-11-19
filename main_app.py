@@ -725,6 +725,11 @@ def main():
     # Load persisted settings; explicit CLI flags override them.
     global STALE_AUDIO_TIMEOUT_SEC
     settings = load_settings()
+    if indic_lang:
+        settings["audio_lang"] = indic_lang
+        settings["asr_language"] = indic_lang
+        settings["indic_lang"] = indic_lang
+        settings["model"] = "indic"
     if args.shared:
         settings["asr_mode"] = "shared"
     elif args.mode:

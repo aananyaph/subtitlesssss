@@ -601,6 +601,19 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         right_col.addWidget(right_label)
         right_col.addWidget(self.combo_sub_lang)
 
+        # Restore saved language selections from settings
+        saved_audio = str(self.settings.get("audio_lang") or self.settings.get("asr_language") or "auto")
+        for i in range(self.combo_audio_lang.count()):
+            if self.combo_audio_lang.itemData(i) == saved_audio:
+                self.combo_audio_lang.setCurrentIndex(i)
+                break
+
+        saved_sub = str(self.settings.get("subtitle_lang") or self.settings.get("tgt_lang") or "en")
+        for i in range(self.combo_sub_lang.count()):
+            if self.combo_sub_lang.itemData(i) == saved_sub:
+                self.combo_sub_lang.setCurrentIndex(i)
+                break
+
         pair_layout.addLayout(left_col, 4)
         pair_layout.addWidget(arrow_lbl, 1)
         pair_layout.addLayout(right_col, 4)
@@ -850,9 +863,12 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
             try:
                 from app.settings import load_settings, save_settings
                 st = load_settings()
+                st["audio_lang"] = audio_lang
                 st["asr_language"] = strategy["asr_language"]
+                st["indic_lang"] = strategy.get("indic_lang")
+                st["model"] = strategy.get("model_name")
                 st["tgt_lang"] = strategy.get("tgt_lang")
-                st["subtitle_lang"] = strategy.get("tgt_lang")
+                st["subtitle_lang"] = sub_lang
                 st["show_source"] = self.chk_show_source.isChecked()
                 save_settings(st)
             except Exception:
