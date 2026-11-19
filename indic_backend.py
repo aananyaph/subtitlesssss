@@ -81,6 +81,8 @@ def load_indic_model():
         ) from e
 
     import os
+    hf_token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or None
+
     # Only use local folder if it physically exists and contains config.json
     local_dir = "/content/indic-conformer-600m-multilingual"
     if os.path.isdir(local_dir) and os.path.isfile(os.path.join(local_dir, "config.json")):
@@ -90,11 +92,11 @@ def load_indic_model():
         _fix_onnx_symlinks(MODEL_ID)
 
     try:
-        _MODEL = AutoModel.from_pretrained(model_source, trust_remote_code=True)
+        _MODEL = AutoModel.from_pretrained(model_source, trust_remote_code=True, token=hf_token)
     except Exception as e:
         if model_source != MODEL_ID:
             _fix_onnx_symlinks(MODEL_ID)
-            _MODEL = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
+            _MODEL = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True, token=hf_token)
         else:
             text = str(e)
             if "gated" in text.lower() or "401" in text or "403" in text:

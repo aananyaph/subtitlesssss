@@ -106,15 +106,24 @@ def apply_asr_config(cfg):
             old.stop()
         except Exception as e:
             logging.warning(f"[Bridge] old pipeline stop failed: {e}")
-    if key[1]:
-        from indic_backend import load_indic_model
-        load_indic_model()
+    active_indic = key[1]
+    active_model = key[0]
+    if active_indic:
+        try:
+            from indic_backend import load_indic_model
+            load_indic_model()
+        except Exception as e:
+            logging.warning(f"[Bridge] IndicConformer unavailable ({e}); falling back to multilingual Whisper for {active_indic}")
+            active_indic = None
+            if active_model in ("indic", "lazy", "auto"):
+                active_model = "base"
+
     new = main_app.DesktopLiveSubtitlePipeline(
         overlay=BridgeOverlay(),
-        model_name=key[0],
-        indic_lang=key[1],
-        asr_language=key[2],
-        asr_task=key[3],
+        model_name=active_model,
+        indic_lang=active_indic,
+        asr_language=key[2] or key[1],
+        asr_task=key[3] or "transcribe",
     )
     try:
         new.start()
