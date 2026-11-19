@@ -16,8 +16,9 @@ import numpy as np
 try:
     import pyaudiowpatch as pyaudio
     HAS_PYAUDIO = True
-except ImportError:
+except Exception:
     HAS_PYAUDIO = False
+    pyaudio = None
 
 
 class WASAPILoopbackCapture(threading.Thread):
@@ -35,12 +36,12 @@ class WASAPILoopbackCapture(threading.Thread):
         self.device_index = device_index
         self._stop_event = threading.Event()
 
-        self.pyaudio_instance: Optional[pyaudio.PyAudio] = None
+        self.pyaudio_instance = None
         self.stream = None
         self.sample_rate = 48000
         self.num_channels = 2
 
-    def _find_loopback_device(self, p: pyaudio.PyAudio) -> dict:
+    def _find_loopback_device(self, p=None) -> dict:
         """Find default WASAPI loopback device info dict."""
         if self.device_index is not None:
             try:
