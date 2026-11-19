@@ -295,11 +295,11 @@ class DesktopLiveSubtitlePipeline:
             threshold=0.35,
             neg_threshold=0.20,
             min_speech_duration_ms=100,
-            min_silence_duration_ms=200,
+            min_silence_duration_ms=350,
             sample_rate=16000,
             frame_size=512,
             min_chunk_floor_sec=min_chunk_floor_sec,
-            max_chunk_duration_sec=2.5,
+            max_chunk_duration_sec=4.0,
         )
 
         if not self.indic_lang:

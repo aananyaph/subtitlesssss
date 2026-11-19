@@ -296,15 +296,15 @@ class OpenVINOASREngine(BaseASREngine):
                 kwargs = {
                     "language": target_lang,
                     "task": task,
-                    "beam_size": 1,
-                    "best_of": 1,
+                    "beam_size": 2 if target_lang != "en" else 1,
+                    "best_of": 2 if target_lang != "en" else 1,
                     "patience": 1.0,
                     "condition_on_previous_text": False,
                     "vad_filter": False,
                     "word_timestamps": False,
                     "without_timestamps": True,
-                    "repetition_penalty": 1.25,
-                    "no_repeat_ngram_size": 3,
+                    "repetition_penalty": 1.15 if target_lang == "en" else 1.0,
+                    "no_repeat_ngram_size": 3 if target_lang == "en" else 0,
                     "compression_ratio_threshold": 2.4,
                 }
                 if initial_prompt:

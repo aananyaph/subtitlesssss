@@ -116,7 +116,7 @@ def apply_asr_config(cfg):
             logging.warning(f"[Bridge] IndicConformer unavailable ({e}); falling back to multilingual Whisper for {active_indic}")
             active_indic = None
             if active_model in ("indic", "lazy", "auto"):
-                active_model = "base"
+                active_model = "small"  # Upgrade fallback from base to high-accuracy small (244M)
 
     new = main_app.DesktopLiveSubtitlePipeline(
         overlay=BridgeOverlay(),
