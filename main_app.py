@@ -27,7 +27,7 @@ import queue
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -731,6 +731,8 @@ def main():
         settings["asr_mode"] = args.mode
     if args.remote_url:
         settings["remote_asr_url"] = args.remote_url
+    elif os.environ.get("REMOTE_ASR_URL"):
+        settings["remote_asr_url"] = os.environ.get("REMOTE_ASR_URL")
 
     model_from_cli = args.model is not None
     model_name = args.model if model_from_cli else str(settings.get("model", "distil-small.en"))
