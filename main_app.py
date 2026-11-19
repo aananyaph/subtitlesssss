@@ -42,9 +42,14 @@ from asr.streaming_asr import StreamingASRManager
 from asr.nlp_processor import NLPPostProcessor
 from app.loopback_capture import WASAPILoopbackCapture, HAS_PYAUDIO
 from app.settings import load_settings, save_settings
-from app.settings_window import SettingsWindow
-from app.tray_icon import SystemTrayController
-from app.overlay_window import DesktopSubtitleOverlay
+try:
+    from app.settings_window import SettingsWindow
+    from app.tray_icon import SystemTrayController
+    from app.overlay_window import DesktopSubtitleOverlay
+except Exception:
+    SettingsWindow = None
+    SystemTrayController = None
+    DesktopSubtitleOverlay = None
 from app.remote_client import RemoteLiveSubtitlePipeline
 
 # ── Qt availability check ─────────────────────────────────────────────────────

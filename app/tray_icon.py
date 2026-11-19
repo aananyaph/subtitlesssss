@@ -22,8 +22,10 @@ except ImportError:
         QT_BINDING = None
 
 
-def create_default_icon(color_hex: str = "#007ACC") -> QIcon:
+def create_default_icon(color_hex: str = "#007ACC"):
     """Creates a simple colored square QIcon for system tray."""
+    if not QT_BINDING:
+        return None
     pixmap = QPixmap(32, 32)
     pixmap.fill(QColor(color_hex))
     return QIcon(pixmap)
