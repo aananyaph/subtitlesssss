@@ -81,32 +81,28 @@ def load_indic_model():
         ) from e
 
     import os
-    target_path = "/content/indic-conformer-600m-multilingual"
-    if not (os.path.isdir(target_path) and os.path.isfile(os.path.join(target_path, "config.json"))):
-        if os.path.exists("/content"):
-            logging.info("[IndicASR] /content/indic-conformer-600m-multilingual missing config.json. Auto-downloading...")
-            try:
-                from huggingface_hub import snapshot_download
-                snapshot_download(MODEL_ID, local_dir=target_path)
-            except Exception as dl_err:
-                logging.warning(f"[IndicASR] Direct download failed ({dl_err}); falling back to HF cache {MODEL_ID}")
-                target_path = MODEL_ID
-                _fix_onnx_symlinks(MODEL_ID)
-        else:
-            target_path = MODEL_ID
-            _fix_onnx_symlinks(MODEL_ID)
+    # Only use local folder if it physically exists and contains config.json
+    local_dir = "/content/indic-conformer-600m-multilingual"
+    if os.path.isdir(local_dir) and os.path.isfile(os.path.join(local_dir, "config.json")):
+        model_source = local_dir
+    else:
+        model_source = MODEL_ID
+        _fix_onnx_symlinks(MODEL_ID)
 
     try:
-        _MODEL = AutoModel.from_pretrained(target_path, trust_remote_code=True)
-    except OSError as e:
-        text = str(e)
-        if "gated" in text.lower() or "401" in text or "403" in text:
-            raise RuntimeError(
-                f"Model {MODEL_ID} is gated. Accept the terms at "
-                f"https://huggingface.co/{MODEL_ID} and set HF_TOKEN "
-                "(or run once with network access after logging in)."
-            ) from e
-        raise RuntimeError(f"Could not load {MODEL_ID}: {e}") from e
+        _MODEL = AutoModel.from_pretrained(model_source, trust_remote_code=True)
+    except Exception as e:
+        if model_source != MODEL_ID:
+            _fix_onnx_symlinks(MODEL_ID)
+            _MODEL = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
+        else:
+            text = str(e)
+            if "gated" in text.lower() or "401" in text or "403" in text:
+                raise RuntimeError(
+                    f"Model {MODEL_ID} is gated. Accept the terms at "
+                    f"https://huggingface.co/{MODEL_ID} and set HF_TOKEN."
+                ) from e
+            raise RuntimeError(f"Could not load {MODEL_ID}: {e}") from e
     return _MODEL
 
 
