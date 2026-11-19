@@ -82,9 +82,19 @@ def load_indic_model():
 
     import os
     target_path = "/content/indic-conformer-600m-multilingual"
-    if not os.path.exists(target_path):
-        target_path = MODEL_ID
-        _fix_onnx_symlinks(MODEL_ID)
+    if not (os.path.isdir(target_path) and os.path.isfile(os.path.join(target_path, "config.json"))):
+        if os.path.exists("/content"):
+            logging.info("[IndicASR] /content/indic-conformer-600m-multilingual missing config.json. Auto-downloading...")
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(MODEL_ID, local_dir=target_path)
+            except Exception as dl_err:
+                logging.warning(f"[IndicASR] Direct download failed ({dl_err}); falling back to HF cache {MODEL_ID}")
+                target_path = MODEL_ID
+                _fix_onnx_symlinks(MODEL_ID)
+        else:
+            target_path = MODEL_ID
+            _fix_onnx_symlinks(MODEL_ID)
 
     try:
         _MODEL = AutoModel.from_pretrained(target_path, trust_remote_code=True)
