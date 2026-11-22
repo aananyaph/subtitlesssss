@@ -119,6 +119,16 @@ class RemoteLiveSubtitlePipeline:
         # Start WASAPI loopback capture on host laptop
         def _on_raw_pcm(raw_bytes, sample_rate, num_channels, is_float32=False):
             self._fmt = (sample_rate, num_channels)
+            if self.meter_callback and raw_bytes:
+                try:
+                    import numpy as np
+                    arr = np.frombuffer(raw_bytes, dtype=np.int16)
+                    if len(arr) > 0:
+                        peak = float(np.max(np.abs(arr))) / 32768.0
+                        state = "SPEAKING" if peak > 0.04 else "LISTENING"
+                        self.meter_callback(peak, peak, state)
+                except Exception:
+                    pass
             try:
                 self.audio_queue.put_nowait((raw_bytes,))
             except queue.Full:
@@ -251,6 +261,13 @@ class RemoteLiveSubtitlePipeline:
                     continue
 
                 msg_type = data.get("type")
+                if msg_type == "connected":
+                    msg = data.get("message", "Bridge ready")
+                    logging.info(f"[RemotePipeline] Bridge acknowledged: {msg}")
+                    if self.overlay:
+                        self.overlay.push_live_text("🟢 Live Subtitle Bridge: Connected & Ready", is_final=True)
+                    continue
+
                 if msg_type == "AUDIO_DIAGNOSTICS" and self.meter_callback:
                     diag = data.get("diagnostics", {})
                     self.meter_callback(

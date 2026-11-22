@@ -86,19 +86,29 @@ class AudioPreprocessor:
         if not raw_bytes:
             return []
 
-        # Auto-detect Float32 vs Int16 PCM format
-        try:
-            try_float32 = np.frombuffer(raw_bytes, dtype=np.float32)
-            max_val = float(np.max(np.abs(try_float32))) if len(try_float32) > 0 else 0.0
-            if is_float32 or (len(try_float32) > 0 and max_val <= 2.0 and not np.isnan(max_val)):
-                float32_arr = try_float32
-            else:
+        # Format conversion: Int16 vs Float32
+        if is_float32 is True:
+            try:
+                float32_arr = np.frombuffer(raw_bytes, dtype=np.float32)
+            except Exception:
                 int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
                 float32_arr = int16_to_float32(int16_arr)
-        except Exception:
-            logging.debug("[AudioUtils] Float32 PCM parse failed, falling back to Int16", exc_info=True)
+        elif is_float32 is False:
             int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
             float32_arr = int16_to_float32(int16_arr)
+        else:
+            # Auto-detect if caller did not specify
+            try:
+                try_float32 = np.frombuffer(raw_bytes, dtype=np.float32)
+                max_val = float(np.max(np.abs(try_float32))) if len(try_float32) > 0 else 0.0
+                if len(try_float32) > 0 and 0.01 <= max_val <= 1.5 and not np.isnan(max_val):
+                    float32_arr = try_float32
+                else:
+                    int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
+                    float32_arr = int16_to_float32(int16_arr)
+            except Exception:
+                int16_arr = np.frombuffer(raw_bytes, dtype=np.int16)
+                float32_arr = int16_to_float32(int16_arr)
 
         if self.num_channels == 2:
             mono_arr = stereo_to_mono(float32_arr)

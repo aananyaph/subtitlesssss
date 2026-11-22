@@ -47,7 +47,7 @@ from app.loopback_capture import WASAPILoopbackCapture
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
 
 HOST = os.environ.get("HOST", "0.0.0.0")
-PORT = int(os.environ.get("PORT", 8765))
+PORT = int(os.environ.get("PORT", 8766))
 
 connected: Set[websockets.WebSocketServerProtocol] = set()
 event_loop: asyncio.AbstractEventLoop = None
@@ -138,6 +138,8 @@ async def handle_client(ws, *args, **kwargs):
     global pipeline
     logging.info(f"[Bridge] Client connected {ws.remote_address}")
     connected.add(ws)
+    client_sample_rate = 48000
+    client_num_channels = 2
     # Send handshake ack
     try:
         await ws.send(json.dumps({"type": "connected", "message": f"Bridge ready model={getattr(pipeline, 'model_name', '?')} task={getattr(pipeline, 'asr_task', '?')}"}))
@@ -160,11 +162,11 @@ async def handle_client(ws, *args, **kwargs):
                         except Exception as e:
                             logging.error(f"[Bridge] apply_asr_config failed: {e}", exc_info=True)
                             await ws.send(json.dumps({"type": "final", "text": f"Server model load failed: {e}", "is_final": True}))
+                    client_sample_rate = data.get("sampleRate", 48000)
+                    client_num_channels = data.get("numChannels", 2)
                     if pipeline and hasattr(pipeline, 'preprocessor'):
-                        sr = data.get("sampleRate", 48000)
-                        ch = data.get("numChannels", 2)
                         try:
-                            pipeline.preprocessor.set_format(sr, ch)
+                            pipeline.preprocessor.set_format(client_sample_rate, client_num_channels)
                         except Exception:
                             pass
                 elif t in ("START_CAPTURE", "STOP_CAPTURE"):
@@ -185,17 +187,23 @@ async def handle_client(ws, *args, **kwargs):
                     await broadcast_json({"type": "flush_ack"})
                 # Ignore other types
             elif isinstance(raw, bytes):
-                # Optional: if Electron ever sends PCM directly, feed to pipeline
+                # Feed incoming PCM chunk to pipeline
                 if pipeline and hasattr(pipeline, 'audio_queue'):
-                    # Same path as WASAPI: push raw bytes
                     try:
-                        pipeline.preprocessor.set_format(48000, 2)
+                        pipeline.preprocessor.set_format(client_sample_rate, client_num_channels)
                     except Exception:
                         pass
                     try:
                         pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
                     except Exception:
-                        pass
+                        try:
+                            pipeline.audio_queue.get_nowait()
+                        except Exception:
+                            pass
+                        try:
+                            pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
+                        except Exception:
+                            pass
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
@@ -235,7 +243,7 @@ def main():
     parser = argparse.ArgumentParser(description="Electron Bridge — Live Subtitle WS server")
     parser.add_argument("--host", default=HOST, help="Host to bind (default 0.0.0.0 or HOST env)")
     parser.add_argument("--model", default=None, help="ASR model (base, distil-small.en, tiny.en). Default from settings")
-    parser.add_argument("--port", type=int, default=PORT, help="WebSocket port (default 8765)")
+    parser.add_argument("--port", type=int, default=PORT, help=f"WebSocket port (default {PORT} or PORT env)")
     parser.add_argument("--list-devices", action="store_true", help="List WASAPI devices and exit")
     args = parser.parse_args()
 

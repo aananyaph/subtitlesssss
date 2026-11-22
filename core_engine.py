@@ -228,7 +228,20 @@ def transcribe(
     if language is None:
         language, _conf = detect_language(source, model_size=model_size, device=device)
     if language in INDIC_LANGS:
-        return _transcribe_indic(source, language, progress_callback=progress_callback)
+        try:
+            return _transcribe_indic(source, language, progress_callback=progress_callback)
+        except Exception as e:
+            import logging
+            logging.warning(f"[core_engine] Indic transcription failed ({e}); falling back to Whisper.")
+            return _transcribe_whisper(
+                source,
+                language,
+                model_size,
+                device,
+                beam_size,
+                vad_filter,
+                progress_callback=progress_callback,
+            )
     return _transcribe_whisper(
         source,
         language,

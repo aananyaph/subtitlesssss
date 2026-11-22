@@ -487,7 +487,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
     overlay_preview_requested = pyqtSignal(str, str)  # (size, position)
     show_source_toggled = pyqtSignal(bool) if QT_BINDING else None
     meter_signal = pyqtSignal(float, float, str)
-    subtitle_signal = pyqtSignal(str, bool)
+    subtitle_signal = pyqtSignal([str, bool], [str, bool, str]) if QT_BINDING else None
 
     def __init__(
         self,
@@ -504,6 +504,7 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         self.setMinimumSize(580, 700)
 
         self.current_settings = current_settings or {}
+        self.settings = self.current_settings
         self.device_list = device_list or []
         self.is_running = False
         self.is_paused = False
@@ -516,7 +517,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
         # Connect internal cross-thread signals
         self.meter_signal.connect(self.update_audio_meter)
-        self.subtitle_signal.connect(self.push_live_subtitle)
+        self.subtitle_signal[str, bool, str].connect(self.push_live_subtitle_with_source)
+        self.subtitle_signal[str, bool].connect(self.push_live_subtitle)
 
         self._build_ui()
         self.setStyleSheet(DARK_STYLESHEET)
@@ -789,6 +791,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
 
     def _on_language_changed(self):
         """Re-evaluates model strategy when user changes audio or subtitle language."""
+        if not hasattr(self, "combo_model_override") or not hasattr(self, "lbl_model_badge"):
+            return
         audio_lang = self.combo_audio_lang.currentData()
         sub_lang = self.combo_sub_lang.currentData()
         override = self.combo_model_override.currentData()
@@ -857,6 +861,8 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
                 "position": self.combo_pos.currentData(),
                 "audio_lang_code": audio_lang,
                 "subtitle_lang_code": sub_lang,
+                "asr_mode": self.settings.get("asr_mode", "shared"),
+                "remote_asr_url": self.settings.get("remote_asr_url", "ws://localhost:8765"),
             }
 
             # Persist choices
@@ -968,15 +974,24 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
             self.lbl_vad_state.setText("⚠️ Speech detected — waiting for server response (>5s)...")
             self.lbl_vad_state.setStyleSheet("color: #FFD700; font-weight: 700;")
 
-    @pyqtSlot(str, bool)
-    def push_live_subtitle(self, text: str, is_final: bool):
-        """Displays latest recognized subtitle in the GUI text box."""
+    @pyqtSlot(str, bool, str)
+    def push_live_subtitle_with_source(self, text: str, is_final: bool, source_text: str = ""):
+        """Displays latest recognized subtitle in the GUI text box with bilingual support."""
         self.speech_timeout_timer.stop()
         clean = text.strip()
-        if not clean:
+        clean_src = source_text.strip() if source_text else ""
+        if not clean and not clean_src:
             return
         timestamp = time.strftime("%H:%M:%S")
-        self.txt_live_subtitles.append(f"[{timestamp}]  {clean}")
+        if self.chk_show_source.isChecked() and clean_src and clean_src != clean:
+            self.txt_live_subtitles.append(f"[{timestamp}]  (Original) {clean_src}\n           ➔ {clean}")
+        else:
+            self.txt_live_subtitles.append(f"[{timestamp}]  {clean}")
         # Scroll to bottom
         sb = self.txt_live_subtitles.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+    @pyqtSlot(str, bool)
+    def push_live_subtitle(self, text: str, is_final: bool):
+        """Displays latest recognized subtitle in the GUI text box."""
+        self.push_live_subtitle_with_source(text, is_final, "")

@@ -107,6 +107,8 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
 
         self.apply_style()
         self.reposition()
+        self.show()
+        self._force_stay_on_top()
 
     def apply_style(self):
         """Applies font size and translucent pill background styling."""
@@ -200,21 +202,39 @@ class DesktopSubtitleOverlay(QWidget if QT_BINDING else object):
             )
             self.label.setText(html_content)
 
-        if not self.label.isVisible():
-            self.label.show()
         if not self.isVisible():
             self.show()
+        if not self.label.isVisible():
+            self.label.show()
+        self._force_stay_on_top()
 
         # Restart auto-fade timer on final or partial update
         self.fade_timer.start(self.fade_timeout_ms)
 
+    def _force_stay_on_top(self):
+        """Forces the overlay window to stay at the very top of Windows desktop Z-order."""
+        self.raise_()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                HWND_TOPMOST = -1
+                SWP_NOMOVE = 0x0002
+                SWP_NOSIZE = 0x0001
+                SWP_NOACTIVATE = 0x0010
+                SWP_SHOWWINDOW = 0x0040
+                ctypes.windll.user32.SetWindowPos(
+                    int(self.winId()), HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+                )
+            except Exception:
+                pass
+
     @pyqtSlot()
     def hide_text(self):
-        """Hides the subtitle text element."""
+        """Hides the subtitle text element while keeping the topmost overlay mapped."""
         if self.label.isVisible():
+            self.label.setText("")
             self.label.hide()
-        if self.isVisible():
-            self.hide()
 
     def set_font_size(self, mode: str):
         """Updates font size mode ('small', 'medium', 'large')."""

@@ -520,7 +520,11 @@ class DesktopLiveSubtitlePipeline:
             try:
                 from core_engine import transcribe
                 audio_float32 = end_pcm.astype(np.float32, copy=False)
-                result = transcribe(audio_float32, language=self.indic_lang)
+                try:
+                    result = transcribe(audio_float32, language=self.indic_lang, backend="auto")
+                except Exception as ind_err:
+                    logging.warning(f"[indic] Indic transcription failed ({ind_err}); falling back to whisper.")
+                    result = transcribe(audio_float32, language=self.indic_lang, backend="whisper", model_size="small")
                 asr_time_s = time.perf_counter() - t0
                 rtf = asr_time_s / audio_dur_s if audio_dur_s > 0 else 0.0
                 text = " ".join(s["text"] for s in result.get("segments", [])).strip()
@@ -725,11 +729,6 @@ def main():
     # Load persisted settings; explicit CLI flags override them.
     global STALE_AUDIO_TIMEOUT_SEC
     settings = load_settings()
-    if indic_lang:
-        settings["audio_lang"] = indic_lang
-        settings["asr_language"] = indic_lang
-        settings["indic_lang"] = indic_lang
-        settings["model"] = "indic"
     if args.shared:
         settings["asr_mode"] = "shared"
     elif args.mode:
@@ -761,6 +760,7 @@ def main():
     overlay = DesktopSubtitleOverlay(
         font_size_mode=font_size, position_mode=position, show_source=show_source
     )
+    overlay.push_live_text("✨ Live Subtitle Studio: Subtitle Overlay Active", is_final=True)
 
     if indic_lang:
         orig_apply_style = overlay.apply_style
@@ -823,7 +823,10 @@ def main():
                 },
                 tgt_lang=req_tgt_lang,
                 meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
-                subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
+                subtitle_callback=lambda text, is_final, *args: (
+                    control_panel.subtitle_signal[str, bool, str].emit(text, is_final, args[0] if args and args[0] else "")
+                    if control_panel.subtitle_signal else None
+                ),
             )
             active_pipeline.start()
             logging.info(f"[ControlCenter] Remote pipeline streaming to {req_remote_url}.")
@@ -845,7 +848,10 @@ def main():
             asr_language=req_asr_lang,
             asr_task=req_asr_task,
             meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
-            subtitle_callback=lambda text, is_final: control_panel.subtitle_signal.emit(text, is_final),
+            subtitle_callback=lambda text, is_final, *args: (
+                control_panel.subtitle_signal[str, bool, str].emit(text, is_final, args[0] if args and args[0] else "")
+                if control_panel.subtitle_signal else None
+            ),
         )
         active_pipeline.start()
         logging.info(
@@ -897,8 +903,8 @@ def main():
         control_panel.raise_()
         control_panel.activateWindow()
 
-    # If --start flag or headless CLI mode was passed, launch pipeline immediately
-    if args.start or (args.no_gui and (model_from_cli or indic_lang)):
+    # If --start flag, --shared mode, or headless CLI mode was passed, launch pipeline immediately
+    if args.start or args.shared or (args.no_gui and (model_from_cli or indic_lang)):
         control_panel._on_start_toggle_clicked()
 
     try:
