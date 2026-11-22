@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Subtitle Studio - Transparent HUD Overlay</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: transparent;
+      overflow: hidden;
+      font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      height: 100vh;
+      width: 100vw;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      padding-bottom: 50px;
+      user-select: none;
+    }
+
+    /* Top control banner (auto-hides in OBS or on idle) */
+    #status-banner {
+      position: fixed;
+      top: 16px;
+      right: 20px;
+      background: rgba(18, 24, 38, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      backdrop-filter: blur(12px);
+      padding: 8px 16px;
+      border-radius: 24px;
+      font-size: 13px;
+      color: #94A3B8;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      transition: opacity 0.5s ease;
+      z-index: 100;
+    }
+
+    #status-banner.dimmed {
+      opacity: 0.15;
+    }
+
+    #status-banner:hover {
+      opacity: 1.0;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #EF4444; /* red by default */
+      box-shadow: 0 0 8px rgba(239, 68, 68, 0.6);
+      transition: all 0.3s ease;
+    }
+
+    .status-dot.connected {
+      background: #10B981;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.8);
+    }
+
+    .status-dot.connecting {
+      background: #F59E0B;
+      box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
+    }
+
+    /* Subtitle Container */
+    #subtitle-container {
+      max-width: 85%;
+      min-width: 320px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      pointer-events: none;
+    }
+
+    .subtitle-pill {
+      background: rgba(10, 15, 28, 0.88);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+      backdrop-filter: blur(14px);
+      padding: 12px 28px;
+      border-radius: 28px;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: opacity 0.25s ease-out, transform 0.25s ease-out;
+      display: inline-block;
+      max-width: 100%;
+      word-wrap: break-word;
+    }
+
+    .subtitle-pill.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .source-text {
+      color: #94A3B8;
+      font-size: 19px;
+      font-weight: 500;
+      margin-bottom: 4px;
+      font-style: italic;
+      letter-spacing: 0.3px;
+    }
+
+    .target-text {
+      color: #FFFFFF;
+      font-size: 26px;
+      font-weight: 700;
+      line-height: 1.35;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+      letter-spacing: 0.2px;
+    }
+
+    .target-text.partial {
+      color: #E2E8F0;
+      opacity: 0.9;
+    }
+
+    /* URL Config Modal for Quick Adjustments */
+    #config-input {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #F8FAFC;
+      border-radius: 12px;
+      padding: 4px 10px;
+      font-size: 12px;
+      outline: none;
+      width: 280px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Status Badge -->
+  <div id="status-banner">
+    <div id="status-indicator" class="status-dot connecting"></div>
+    <span id="status-label">Connecting to Bridge...</span>
+    <input id="config-input" type="text" value="wss://aspire-reluctant-obsession.ngrok-free.dev" title="Edit WebSocket URL and press Enter">
+  </div>
+
+  <!-- Live Subtitle Overlay -->
+  <div id="subtitle-container">
+    <div id="subtitle-box" class="subtitle-pill">
+      <div id="source-line" class="source-text" style="display: none;"></div>
+      <div id="target-line" class="target-text">✨ Live Subtitle Studio: Overlay Active</div>
+    </div>
+  </div>
+
+  <script>
+    const statusDot = document.getElementById('status-indicator');
+    const statusLabel = document.getElementById('status-label');
+    const statusBanner = document.getElementById('status-banner');
+    const subtitleBox = document.getElementById('subtitle-box');
+    const sourceLine = document.getElementById('source-line');
+    const targetLine = document.getElementById('target-line');
+    const configInput = document.getElementById('config-input');
+
+    let socket = null;
+    let fadeTimer = null;
+    let reconnectTimer = null;
+    let currentServerUrl = configInput.value.trim();
+
+    // Auto-dim status banner after 5 seconds of inactivity
+    let bannerDimTimer = setTimeout(() => statusBanner.classList.add('dimmed'), 5000);
+    window.addEventListener('mousemove', () => {
+      statusBanner.classList.remove('dimmed');
+      clearTimeout(bannerDimTimer);
+      bannerDimTimer = setTimeout(() => statusBanner.classList.add('dimmed'), 4000);
+    });
+
+    function setStatus(state, message) {
+      statusDot.className = 'status-dot ' + state;
+      statusLabel.textContent = message;
+    }
+
+    function showSubtitle(text, sourceText = '', isFinal = true) {
+      if (!text && !sourceText) return;
+
+      if (sourceText && sourceText !== text) {
+        sourceLine.textContent = `(Original) ${sourceText}`;
+        sourceLine.style.display = 'block';
+      } else {
+        sourceLine.style.display = 'none';
+      }
+
+      targetLine.textContent = text;
+      targetLine.className = 'target-text' + (isFinal ? '' : ' partial');
+
+      subtitleBox.classList.add('visible');
+
+      // Reset fade-out timer (clears text after 6 seconds of silence)
+      clearTimeout(fadeTimer);
+      fadeTimer = setTimeout(() => {
+        subtitleBox.classList.remove('visible');
+      }, 6000);
+    }
+
+    function connectWebSocket() {
+      if (socket) {
+        try {
+          socket.close();
+        } catch (e) {}
+      }
+
+      clearTimeout(reconnectTimer);
+      setStatus('connecting', 'Connecting...');
+
+      const wsUrl = currentServerUrl;
+      console.log('[LiveSubtitles] Initializing WebSocket:', wsUrl);
+
+      try {
+        socket = new WebSocket(wsUrl);
+
+        socket.onopen = function () {
+          console.log('[LiveSubtitles] WebSocket connected successfully.');
+          setStatus('connected', 'Connected');
+          showSubtitle('🟢 Connected to Live Subtitle Bridge', '', true);
+
+          // Send handshake
+          const handshake = {
+            type: "HANDSHAKE",
+            sampleRate: 48000,
+            numChannels: 2,
+            clientType: "HTML_OVERLAY",
+            asrConfig: {
+              model_name: "indic",
+              indic_lang: "hi",
+              asr_language: "hi",
+              tgt_lang: "en"
+            }
+          };
+          socket.send(JSON.stringify(handshake));
+        };
+
+        socket.onmessage = function (event) {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('[LiveSubtitles] Message received:', data);
+
+            if (data.type === 'connected') {
+              setStatus('connected', data.message || 'Bridge Ready');
+            } else if (data.type === 'final' || data.type === 'partial' || data.is_final !== undefined) {
+              const text = data.text || '';
+              const source = data.source_text || '';
+              const isFinal = data.is_final ?? (data.type === 'final');
+              showSubtitle(text, source, isFinal);
+            }
+          } catch (err) {
+            // Non-JSON raw text
+            if (typeof event.data === 'string') {
+              showSubtitle(event.data, '', true);
+            }
+          }
+        };
+
+        socket.onclose = function (event) {
+          console.warn('[LiveSubtitles] WebSocket closed:', event.code, event.reason);
+          setStatus('', 'Disconnected');
+          // Auto-reconnect in 3 seconds
+          reconnectTimer = setTimeout(connectWebSocket, 3000);
+        };
+
+        socket.onerror = function (error) {
+          console.error('[LiveSubtitles] WebSocket error:', error);
+          setStatus('', 'Connection Error');
+        };
+
+      } catch (err) {
+        console.error('[LiveSubtitles] Failed to initialize WebSocket:', err);
+        setStatus('', 'Failed to Connect');
+        reconnectTimer = setTimeout(connectWebSocket, 4000);
+      }
+    }
+
+    // Change server URL on enter
+    configInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        currentServerUrl = configInput.value.trim();
+        connectWebSocket();
+      }
+    });
+
+    // Initial subtitle greeting
+    showSubtitle('✨ Live Subtitle Studio: Subtitle Overlay Active', '', true);
+
+    // Start connection
+    connectWebSocket();
+  </script>
+</body>
+</html>
