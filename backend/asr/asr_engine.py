@@ -4,6 +4,7 @@ Provides pluggable BaseASREngine interface and FasterWhisperEngine implementatio
 using faster-whisper (tiny int8 CPU) loaded ONCE at startup.
 """
 from abc import ABC, abstractmethod
+import logging
 import time
 import numpy as np
 

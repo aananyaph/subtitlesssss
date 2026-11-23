@@ -1,7 +1,7 @@
 """Module 3 — Batch Pipeline.
 
 Handles single-file end-to-end subtitle generation:
-File in -> audio extraction (ffmpeg) -> ASR transcription (core_engine) -> subtitle formatting (subtitle_formatter).
+File in -> audio extraction (ffmpeg) -> ASR transcription (core_engine) -> optional IndicTrans2 translation -> subtitle formatting (subtitle_formatter).
 """
 
 import os
@@ -13,6 +13,7 @@ from typing import Callable, Dict, Optional
 
 import core_engine
 import subtitle_formatter
+from subtitle_translation import translate_segments
 
 __all__ = [
     "ALLOWED_INPUT_EXTENSIONS",
@@ -160,6 +161,7 @@ def process_file(
     model_size: str = "small",
     language: Optional[str] = None,
     device: str = "cpu",
+    target_language: Optional[str] = None,
     progress_callback: Optional[Callable[[float], None]] = None,
 ) -> Dict:
     """Process a single audio or video file end-to-end to generate subtitles.
@@ -168,8 +170,9 @@ def process_file(
       1. Validate input path, extension, and output format.
       2. Extract 16 kHz mono PCM wav into a guaranteed temporary directory.
       3. Transcribe with core_engine.transcribe.
-      4. Format and save subtitles via subtitle_formatter.save_subtitle.
-      5. Report 1.0 progress callback on completion.
+      4. Translate segments when ``target_language`` differs from the spoken language.
+      5. Format and save subtitles via subtitle_formatter.save_subtitle.
+      6. Report 1.0 progress callback on completion.
 
     Returns:
       {"output_path": str, "language": str, "segment_count": int, "duration": float}
@@ -221,8 +224,13 @@ def process_file(
             progress_callback=progress_callback,
         )
 
-        # Step 4: Save subtitles via subtitle_formatter
+        # Step 4: Translate into the requested subtitle language (if any).
+        # ASR language must be the spoken language; target_language is separate.
         segments = transcription.get("segments", [])
+        src_lang = language or transcription.get("language")
+        translate_segments(segments, src_lang, target_language)
+
+        # Step 5: Save subtitles via subtitle_formatter
         saved_output_path = subtitle_formatter.save_subtitle(
             segments,
             target_output,

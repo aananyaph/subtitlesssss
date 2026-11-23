@@ -1,7 +1,7 @@
 """Remote ASR Client Pipeline for Live Subtitle PC App.
 
 Enables teammates on separate laptops to capture local Windows WASAPI loopback audio
-and stream PCM chunks to a shared remote Docker ML inference server over WebSocket.
+and stream PCM chunks to a shared remote ML inference server over WebSocket.
 This avoids downloading multi-GB model weights and eliminates heavy CPU inference on laptops.
 """
 
@@ -125,7 +125,7 @@ class RemoteLiveSubtitlePipeline:
                     arr = np.frombuffer(raw_bytes, dtype=np.int16)
                     if len(arr) > 0:
                         peak = float(np.max(np.abs(arr))) / 32768.0
-                        state = "SPEAKING" if peak > 0.04 else "LISTENING"
+                        state = "SPEECH" if peak > 0.04 else "NON_SPEECH"
                         self.meter_callback(peak, peak, state)
                 except Exception:
                     pass

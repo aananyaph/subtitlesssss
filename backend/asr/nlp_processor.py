@@ -60,7 +60,7 @@ class SileroPunctuationEngine:
             self.model = None
             self.apply_te = None
 
-def restore_punctuation(self, text: str) -> str:
+    def restore_punctuation(self, text: str) -> str:
         """Restores sentence capitalization, proper nouns, and boundary punctuation using Silero text enhancement model."""
         if not text or not text.strip():
             return ""

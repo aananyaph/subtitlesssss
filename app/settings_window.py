@@ -115,7 +115,7 @@ class SettingsWindow(QDialog if QT_BINDING else object):
         self.mode_combo = QComboBox(self)
         self.mode_combo.setAccessibleName("ASR Inference Mode")
         self.mode_combo.addItem("Shared Inference Server (Team Server)", "shared")
-        self.mode_combo.addItem("Local Engine (Docker / Host)", "local")
+        self.mode_combo.addItem("Local Engine (Host)", "local")
         mode_idx = self.mode_combo.findData(self._settings.get("asr_mode", "shared"))
         if mode_idx >= 0:
             self.mode_combo.setCurrentIndex(mode_idx)

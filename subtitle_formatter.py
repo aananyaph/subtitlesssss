@@ -66,46 +66,42 @@ def seconds_to_vtt_time(seconds: float) -> str:
 
 
 def _wrap_lines(text: str, max_chars: int = MAX_CHARS_PER_LINE, max_lines: int = MAX_LINES) -> str:
-    """Wrap text to max_chars per line, max_lines lines, returning \\n-joined string."""
-    text = text.strip()
+    """Wrap text to max_chars per line, max_lines lines, returning \n-joined string.
+
+    Never drops or duplicates words: every input word is consumed exactly once,
+    in order.  Long words are hard-split into chunks instead of being truncated.
+    """
+    text = " ".join(text.split())
+    if not text:
+        return ""
     if len(text) <= max_chars or max_lines == 1:
         return text
 
-    words = text.split()
     lines: List[str] = []
     current = ""
 
-    for w in words:
-        # If single word exceeds max_chars, hard-break it (rare for natural language)
-        if len(w) > max_chars:
+    for word in text.split():
+        if len(word) > max_chars:
             if current:
                 lines.append(current)
                 current = ""
-            # chunk long word
-            for i in range(0, len(w), max_chars):
-                lines.append(w[i : i + max_chars])
-                if len(lines) >= max_lines:
-                    break
+            for i in range(0, len(word), max_chars):
+                lines.append(word[i : i + max_chars])
             continue
 
-        candidate = f"{current} {w}".strip() if current else w
+        candidate = f"{current} {word}".strip() if current else word
         if len(candidate) <= max_chars:
             current = candidate
         else:
-            lines.append(current)
-            current = w
-            if len(lines) >= max_lines - 1:
-                # Last line: append remainder as-is (will exceed slightly but keeps 2-line limit)
-                # Collect remaining words into last line
-                remaining = " ".join(words[words.index(w) + 1 :])
-                if remaining:
-                    current = f"{current} {remaining}".strip()
-                break
+            if current:
+                lines.append(current)
+            current = word
 
     if current:
         lines.append(current)
 
-    # Enforce max_lines: merge overflow into last line
+    # Enforce the line limit by merging overflow into the final line.  This
+    # preserves all text (unlike the old words.index() approach).
     if len(lines) > max_lines:
         lines = lines[: max_lines - 1] + [" ".join(lines[max_lines - 1 :])]
 
@@ -190,27 +186,30 @@ def split_long_segment(segment: Dict) -> List[Dict]:
     if len(text_chunks) <= 1:
         return [{"start": start, "end": end, "text": text}]
 
-    # Allocate duration proportionally by character length (simple, readable)
-    total_chars = sum(len(c) for c in text_chunks)
+    # Allocate durations proportionally to text length, with a readability floor
+    # that shrinks automatically when the source segment is too short for 1 s cues.
+    # The durations are normalised so they always sum exactly to `duration`,
+    # which keeps every timestamp monotonic and inside [start, end].
+    weights = [max(1, len(chunk)) for chunk in text_chunks]
+    total_chars = sum(weights)
+    n_chunks = len(text_chunks)
+    min_each = min(1.0, duration / n_chunks) if duration > 0 else 0.0
+    durs = [max(min_each, duration * weight / total_chars) for weight in weights]
+    total_dur = sum(durs)
+    if total_dur > 0:
+        durs = [d * duration / total_dur for d in durs]
+
     result: List[Dict] = []
     cursor = start
-
     for i, chunk in enumerate(text_chunks):
-        # Last chunk snaps to original end to avoid floating drift
-        if i == len(text_chunks) - 1:
-            chunk_end = end
+        chunk_start = round(cursor, 3)
+        if i == n_chunks - 1:
+            chunk_end = round(end, 3)
         else:
-            ratio = len(chunk) / total_chars if total_chars else 1 / len(text_chunks)
-            chunk_dur = duration * ratio
-            # Clamp to at least 1.0s for readability
-            chunk_dur = max(1.0, chunk_dur)
-            chunk_end = cursor + chunk_dur
-            # Prevent overflow
-            remaining_min = (len(text_chunks) - i - 1) * 1.0
-            if chunk_end > end - remaining_min:
-                chunk_end = end - remaining_min
-
-        result.append({"start": round(cursor, 3), "end": round(chunk_end, 3), "text": chunk})
+            chunk_end = round(cursor + durs[i], 3)
+            if chunk_end <= chunk_start:
+                chunk_end = round(chunk_start + 0.001, 3)
+        result.append({"start": chunk_start, "end": chunk_end, "text": chunk})
         cursor = chunk_end
 
     return result
@@ -256,7 +255,7 @@ def format_vtt(segments: List[Dict]) -> str:
     """
     normalized = _normalize_segments(segments)
     if not normalized:
-        return "WEBVTT\n"
+        return "WEBVTT\n\n"
 
     lines: List[str] = ["WEBVTT", ""]
     for seg in normalized:

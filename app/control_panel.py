@@ -112,110 +112,91 @@ def resolve_model_strategy(
     subtitle_lang: str,
     override_model: str = "auto",
 ) -> Dict[str, object]:
-    """Determines the best model, task, language code, and descriptive badges
-    based on the user's chosen Audio and Subtitle languages.
+    """Determine ASR settings and the target subtitle language.
+
+    ``asr_language`` must always be the SPOKEN language.  ``tgt_lang`` is a
+    separate target handled by IndicTrans2 (proxy in shared mode, locally in
+    local/batch mode).  Never derive ``asr_language`` from the subtitle
+    language: doing so disables translation entirely.
     """
-    # Determine target translation language (tgt_lang: en, hi, kn)
+    supported = ("en", "hi", "kn")
     tgt_lang = None
-    if subtitle_lang in ("en", "hi", "kn"):
+    if subtitle_lang in supported:
         tgt_lang = subtitle_lang
-    elif subtitle_lang == "same":
-        tgt_lang = audio_lang if audio_lang in ("en", "hi", "kn") else None
+    elif subtitle_lang == "same" and audio_lang in supported:
+        tgt_lang = audio_lang
 
-    # 1. Native Indic Transcription (Hindi / Kannada)
-    if subtitle_lang in ("hi", "kn"):
-        target_lang = subtitle_lang
-        lang_name = "Hindi" if target_lang == "hi" else "Kannada"
+    src_lang = audio_lang if audio_lang in supported else None
+    auto_assumed_en = False
+    if src_lang is None and audio_lang == "auto" and tgt_lang in ("hi", "kn"):
+        # The translation router requires an explicit source language in the
+        # handshake.  Auto-detect cannot provide one before ASR runs, so use
+        # the common case (English audio) and label it clearly in the UI.
+        src_lang = "en"
+        auto_assumed_en = True
 
-        if override_model in ("indic", "auto"):
-            chosen_model = "indic"
-            use_indic = True
-            badge = f"🇮🇳 AI4Bharat IndicConformer ({lang_name})"
-            desc = f"Heavy 600M neural model. Highest Indic accuracy (Warning: CPU intensive)."
+    translating = bool(tgt_lang and src_lang and tgt_lang != src_lang)
+
+    def _asr_model_for_source(lang: str) -> str:
+        """Pick an ASR engine for the spoken language, honouring explicit overrides."""
+        override = override_model or "auto"
+        if lang in ("hi", "kn"):
+            return "indic" if override in ("auto", "indic") else override
+        # IndicConformer is meaningless for English audio; use a Whisper model.
+        return "distil-small.en" if override in ("auto", "indic") else override
+
+    chosen_model = _asr_model_for_source(src_lang) if src_lang else (
+        override_model if override_model not in ("auto", "indic") else "small"
+    )
+    use_indic = chosen_model == "indic" and src_lang in ("hi", "kn")
+    asr_language = src_lang
+    asr_task = "transcribe"
+
+    names = {"en": "English", "hi": "Hindi", "kn": "Kannada"}
+    source_name = names.get(src_lang or "", "Auto-detected speech")
+    target_name = names.get(tgt_lang or "", "source language")
+
+    if translating:
+        if auto_assumed_en:
+            badge = f"🌐 English ASR ➡ {target_name} (IndicTrans2, auto assumed English)"
+            desc = "Auto-detect cannot set a source language before the handshake; English audio is assumed. Select English explicitly if needed."
+        elif src_lang == "en":
+            badge = f"🌐 {chosen_model} ➡ {target_name} (IndicTrans2)"
+            desc = f"Transcribes English speech and translates it into {target_name} subtitles live with IndicTrans2."
         else:
-            chosen_model = "small" if override_model == "auto" else override_model
-            use_indic = False
-            if chosen_model == "small":
-                badge = f"🎯 faster-whisper small (Accurate {lang_name} ASR)"
-                desc = f"Transcribes {lang_name} speech with high vocabulary accuracy (~5.9s–7.9s on Intel CPU)."
-            elif chosen_model == "base":
-                badge = f"⚡ faster-whisper base (Fast {lang_name} ASR)"
-                desc = f"Fast live updates (~1.8s–2.2s on CPU) with anti-repetition guards."
-            else:
-                badge = f"🔧 faster-whisper {chosen_model} ({lang_name} ASR)"
-                desc = f"Running {chosen_model} for {lang_name} native transcription."
+            engine = "AI4Bharat IndicConformer" if use_indic else chosen_model
+            badge = f"🇮🇳 {engine} ➡ {target_name} (IndicTrans2)"
+            desc = f"Transcribes {source_name} speech and translates it into {target_name} subtitles live."
+        mode_tag = f"Live Translation → {target_name}"
+    elif use_indic or src_lang:
+        if use_indic:
+            badge = f"🇮🇳 AI4Bharat IndicConformer ({source_name})"
+            desc = f"Heavy 600M neural model. Highest {source_name} accuracy (Warning: CPU intensive)."
+            mode_tag = f"Native {source_name} Transcription"
+        else:
+            badge = f"🎯 {chosen_model} ({source_name} ASR)"
+            desc = f"Transcribes {source_name} speech directly with {chosen_model}."
+            mode_tag = "Direct Transcription"
+    elif subtitle_lang == "same":
+        badge = f"🎯 {chosen_model} (Auto-detect, native transcript)"
+        desc = "Auto-detects the spoken language and keeps subtitles in that language."
+        mode_tag = "Direct Transcription"
+    else:
+        # Genuine auto-detect with an English target: Whisper can do this itself.
+        asr_task = "translate"
+        badge = f"🌐 {chosen_model} (Multilingual → English)"
+        desc = "Auto-detects the spoken language and translates it to English."
+        mode_tag = "Translate"
 
-        return {
-            "model_name": chosen_model,
-            "indic_lang": target_lang if use_indic else None,
-            "asr_language": target_lang,
-            "asr_task": "transcribe",
-            "tgt_lang": tgt_lang,
-            "badge": badge,
-            "description": desc,
-            "mode_tag": f"Native {lang_name} Transcription",
-        }
-
-    # 2. English audio -> English subtitles
-    if audio_lang == "en" and subtitle_lang in ("en", "same"):
-        chosen_model = "distil-small.en" if override_model == "auto" else override_model
-        return {
-            "model_name": chosen_model,
-            "indic_lang": None,
-            "asr_language": "en",
-            "asr_task": "transcribe",
-            "tgt_lang": tgt_lang,
-            "badge": f"⚡ {chosen_model} (English Specialist)",
-            "description": "Ultra-fast English transcription with Intel CPU INT8 optimization. Lowest latency (< 350ms).",
-            "mode_tag": "Direct Transcription",
-        }
-
-    # 3. Foreign / Auto audio -> English subtitles (Live Translation)
-    if subtitle_lang == "en":
-        is_indic = audio_lang in ("hi", "kn")
-        chosen_model = "indic" if (is_indic and override_model in ("auto", "indic")) else ("small" if override_model == "auto" else override_model)
-        lang_hint = None if audio_lang == "auto" else audio_lang
-        audio_name = next((name for code, name, _ in AUDIO_LANGUAGES if code == audio_lang), audio_lang)
-        badge = f"🇮🇳 AI4Bharat IndicConformer ➔ English" if (is_indic and chosen_model == "indic") else f"🌐 {chosen_model} (Live Translation ➔ English)"
-        desc = f"Listens to {audio_name} with AI4Bharat IndicConformer (600M) and translates into English via IndicTrans2." if (is_indic and chosen_model == "indic") else f"Listens to {audio_name} and translates speech into English live subtitles in real time."
-        return {
-            "model_name": chosen_model,
-            "indic_lang": audio_lang if (is_indic and chosen_model == "indic") else None,
-            "asr_language": lang_hint,
-            "asr_task": "transcribe" if is_indic else "translate",
-            "tgt_lang": tgt_lang,
-            "badge": badge,
-            "description": desc,
-            "mode_tag": "AI4Bharat Translation" if is_indic else "Live Translation",
-        }
-
-    # 4. Foreign audio -> Same foreign language (Native Transcription)
-    if subtitle_lang == "same":
-        chosen_model = "base" if override_model == "auto" else override_model
-        lang_hint = None if audio_lang == "auto" else audio_lang
-        audio_name = next((name for code, name, _ in AUDIO_LANGUAGES if code == audio_lang), audio_lang)
-        return {
-            "model_name": chosen_model,
-            "indic_lang": None,
-            "asr_language": lang_hint,
-            "asr_task": "transcribe",
-            "tgt_lang": tgt_lang,
-            "badge": f"🎯 {chosen_model} (Transcribe in {audio_lang.upper()})",
-            "description": f"Transcribes spoken speech directly into native {audio_name} script.",
-            "mode_tag": "Direct Transcription",
-        }
-
-    # Fallback default
-    chosen_model = "base" if override_model == "auto" else override_model
     return {
         "model_name": chosen_model,
-        "indic_lang": None,
-        "asr_language": None,
-        "asr_task": "translate",
+        "indic_lang": src_lang if use_indic else None,
+        "asr_language": asr_language,
+        "asr_task": asr_task,
         "tgt_lang": tgt_lang,
-        "badge": f"🌐 {chosen_model} (Multilingual)",
-        "description": "Balanced multilingual model translating to English.",
-        "mode_tag": "Translate",
+        "badge": badge,
+        "description": desc,
+        "mode_tag": mode_tag,
     }
 
 

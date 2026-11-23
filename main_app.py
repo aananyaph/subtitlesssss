@@ -15,6 +15,9 @@ Orchestrates:
         ▼
     NLP Post-Processing Layer (Punctuation, Safety & Duplicate Filter)
         │
+        ▼
+    Optional IndicTrans2 Translation (e.g. English speech → Hindi subtitles)
+        │
         ▼ (Direct Python function call / Qt Signal)
     Desktop Subtitle Overlay Window (Frameless, Transparent, Click-Through)
     Optional Local LLM Post-Correction (feature-gated, on-demand)
@@ -51,6 +54,7 @@ except Exception:
     SystemTrayController = None
     DesktopSubtitleOverlay = None
 from app.remote_client import RemoteLiveSubtitlePipeline
+from subtitle_translation import needs_translation, translate_text
 
 # ── Qt availability check ─────────────────────────────────────────────────────
 try:
@@ -268,14 +272,20 @@ class DesktopLiveSubtitlePipeline:
         indic_lang: Optional[str] = None,
         asr_language: Optional[str] = None,
         asr_task: Optional[str] = None,
+        tgt_lang: Optional[str] = None,
         meter_callback: Optional[Callable[[float, float, str], None]] = None,
         subtitle_callback: Optional[Callable[[str, bool], None]] = None,
+        capture_locally: bool = True,
     ):
         self.overlay = overlay
         self.model_name = model_name
         self.min_chunk_floor_sec = min_chunk_floor_sec
         self.device_index = device_index
         self.indic_lang = indic_lang
+        self.tgt_lang = str(tgt_lang).strip().lower() if tgt_lang else None
+        # False for the shared WebSocket bridge: audio arrives from the remote
+        # client and the server must never open its own WASAPI loopback device.
+        self.capture_locally = capture_locally
         self.meter_callback = meter_callback
         self.subtitle_callback = subtitle_callback
         self._seg_counter = 0
@@ -380,11 +390,17 @@ class DesktopLiveSubtitlePipeline:
                 except queue.Empty:
                     pass
 
-        self.loopback_capture = WASAPILoopbackCapture(
-            audio_callback=on_raw_pcm, device_index=self.device_index
-        )
-        self.loopback_capture.start()
-        logging.info("[Pipeline] Single-process PC Application Pipeline Started.")
+        if self.capture_locally:
+            self.loopback_capture = WASAPILoopbackCapture(
+                audio_callback=on_raw_pcm, device_index=self.device_index
+            )
+            self.loopback_capture.start()
+            logging.info("[Pipeline] Single-process PC Application Pipeline Started (local capture).")
+        else:
+            self.loopback_capture = None
+            logging.info(
+                "[Pipeline] Pipeline Started (remote audio via audio_queue; no local capture)."
+            )
 
     def stop(self):
         """Stops audio capture and pipeline worker."""
@@ -407,7 +423,14 @@ class DesktopLiveSubtitlePipeline:
         logging.info(f"[Pipeline] Switching ASR model to '{model_name}'...")
         self.model_name = model_name
         if not self.indic_lang:
-            self.asr_language, self.asr_task = _resolve_asr_task_language(model_name)
+            if self.tgt_lang:
+                # IndicTrans2 owns the translation; ASR must keep transcribing the
+                # source language even when the new model is multilingual.
+                default_lang, _ = _resolve_asr_task_language(model_name)
+                self.asr_language = self.asr_language or default_lang
+                self.asr_task = "transcribe"
+            else:
+                self.asr_language, self.asr_task = _resolve_asr_task_language(model_name)
             self.asr_engine = OpenVINOASREngine(
                 model_size=model_name,
                 device="CPU",
@@ -528,6 +551,8 @@ class DesktopLiveSubtitlePipeline:
                 asr_time_s = time.perf_counter() - t0
                 rtf = asr_time_s / audio_dur_s if audio_dur_s > 0 else 0.0
                 text = " ".join(s["text"] for s in result.get("segments", [])).strip()
+                if text and needs_translation(self.indic_lang, self.tgt_lang):
+                    text = translate_text(text, self.indic_lang, self.tgt_lang)
                 char_count = len(text)
                 print(
                     f"[indic] seg {seg_num} | audio {audio_dur_s:.1f}s | asr {asr_time_s:.1f}s | RTF {rtf:.2f} | chars {char_count}",
@@ -582,6 +607,10 @@ class DesktopLiveSubtitlePipeline:
             return
 
         final_text = nlp_res["text"]
+        translation_applied = needs_translation(effective_lang or self.asr_language, self.tgt_lang)
+        if translation_applied:
+            src_for_translation = (effective_lang or self.asr_language or "en").strip().lower()
+            final_text = translate_text(final_text, src_for_translation, self.tgt_lang)
         detected = ev.get("language", "?")
         logging.info(
             f"[SUBTITLE] Final Output: \"{final_text}\" "
@@ -598,7 +627,9 @@ class DesktopLiveSubtitlePipeline:
                 pass
 
         # ── Step 3: Schedule on-demand LLM post-correction (non-blocking) ────────
-        if ASYNC_LLM_CORRECTION_ENABLED and self.llm_corrector:
+        # LLM correction runs on source-language text only; skip it after IndicTrans2
+        # translation so an English corrector cannot overwrite Hindi/Kannada captions.
+        if ASYNC_LLM_CORRECTION_ENABLED and self.llm_corrector and not translation_applied:
             # Delay correction so the initial caption is displayed first, then corrected smoothly
             # after a short stabilization window (2s). Uses threading.Timer so ASR thread is not blocked.
             correction_timer = threading.Timer(
@@ -698,7 +729,7 @@ def main():
         "--mode",
         choices=["shared", "local"],
         default=None,
-        help="Inference mode: 'shared' (connect to remote Docker server) or 'local' (run in-process / local engine).",
+        help="Inference mode: 'shared' (connect to remote inference server) or 'local' (run in-process / local engine).",
     )
     parser.add_argument(
         "--remote-url",
@@ -847,6 +878,7 @@ def main():
             indic_lang=req_indic,
             asr_language=req_asr_lang,
             asr_task=req_asr_task,
+            tgt_lang=req_tgt_lang,
             meter_callback=lambda peak, prob, state: control_panel.meter_signal.emit(peak, prob, state),
             subtitle_callback=lambda text, is_final, *args: (
                 control_panel.subtitle_signal[str, bool, str].emit(text, is_final, args[0] if args and args[0] else "")
@@ -856,7 +888,7 @@ def main():
         active_pipeline.start()
         logging.info(
             f"[ControlCenter] Local pipeline started (model='{req_model}', indic='{req_indic}', "
-            f"lang='{req_asr_lang}', task='{req_asr_task}')."
+            f"lang='{req_asr_lang}', task='{req_asr_task}', target='{req_tgt_lang}')."
         )
 
     def stop_active_pipeline():

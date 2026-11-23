@@ -44,6 +44,9 @@ SENT_END = (".", "?", "!", "\u0964", "\u2026")
 TRANSLATOR_BACKEND = os.environ.get("TRANSLATOR_BACKEND", "torch1b").lower()
 SHOW_SOURCE_PARTIALS = os.environ.get("SHOW_SOURCE_PARTIALS", "0").lower() in ("1", "true", "yes")
 MAX_RESIDENT_MODELS = int(os.environ.get("MAX_RESIDENT_MODELS", "2"))
+# Bound the per-client translation queue so a slow translator applies
+# backpressure to the upstream reader instead of growing memory without limit.
+TRANSLATION_QUEUE_MAX = int(os.environ.get("TRANSLATION_QUEUE_MAX", "200"))
 
 logging.basicConfig(level=logging.INFO, stream=sys.stdout,
                     format="%(asctime)s [%(levelname)s] %(message)s")
@@ -203,7 +206,7 @@ def translate_with_meta(text, src, tgt):
                 backend_used = "onnx_fallback"
             except Exception as onnx_exc:
                 log.error(f"ONNX fallback also failed: {onnx_exc}", exc_info=True)
-                return text, "failed", False
+                return text, f"failed: gpu={exc}; onnx={onnx_exc}", False
 
     out = (res or "").strip() or text
     _put_text_cache(src, tgt, text, out)
@@ -378,13 +381,13 @@ async def translate_worker(client, state, q):
                 "cache_hit": cache_hit,
             }, ensure_ascii=False))
 
-        msg = dict(batch[-1], text=out, source_text=src_text, language=state["tgt"])
+        msg = dict(batch[-1], text=out, source_text=src_text, language=state["tgt"], backend=backend_used)
         await client.send(json.dumps(msg, ensure_ascii=False))
 
 
 async def handler(client):
     state = {"src": None, "tgt": None}
-    q = asyncio.Queue()
+    q = asyncio.Queue(maxsize=TRANSLATION_QUEUE_MAX)
     log.info("client connected")
     tasks = []
     up = None

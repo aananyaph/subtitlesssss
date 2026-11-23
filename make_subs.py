@@ -25,8 +25,9 @@ __all__ = [
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python make_subs.py <input_file> [output_path] [format] [language] [model_size] [device]")
-        print("Example: python make_subs.py video.mp4 output.srt srt en small cpu")
+        print("Usage: python make_subs.py <input_file> [output_path] [format] [language] [model_size] [device] [target_language]")
+        print("Example: python make_subs.py video.mp4 output.srt srt en small cpu hi")
+        print("         (language = spoken audio language; target_language = subtitle language, e.g. hi/kn/en)")
         sys.exit(1)
 
     input_path = sys.argv[1]
@@ -35,6 +36,7 @@ def main():
     language = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "auto" else None
     model_size = sys.argv[5] if len(sys.argv) > 5 else "small"
     device = sys.argv[6] if len(sys.argv) > 6 else "cpu"
+    target_language = sys.argv[7] if len(sys.argv) > 7 and sys.argv[7] != "-" else None
 
     def progress_callback(fraction: float):
         percent = int(fraction * 100)
@@ -49,6 +51,7 @@ def main():
         model_size=model_size,
         language=language,
         device=device,
+        target_language=target_language,
         progress_callback=progress_callback,
     )
     print(f"\nDone! Output saved to: {result['output_path']}")

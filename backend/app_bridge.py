@@ -1,271 +1,341 @@
-"""WebSocket Bridge for Electron Frontend ↔ Python Pipeline.
+"""WebSocket ASR bridge for remote subtitle clients.
 
-Listens on ws://localhost:8765 (same port as legacy vad_server for compatibility).
-- Receives Electron control messages: START_CAPTURE / STOP_CAPTURE / UPDATE_SETTINGS / HANDSHAKE
-- Broadcasts live subtitles to all connected Electron/Chrome clients:
-  {type: "final"|"partial", text, language, start, end, processing_time_s}
-  {type: "AUDIO_DIAGNOSTICS", diagnostics: {...}}
-- Runs DesktopLiveSubtitlePipeline (base multilingual translate) and forwards overlay pushes.
+client <-> [translation_proxy :8765] <-> [this bridge :8766]
+
+Each WebSocket client gets its OWN pipeline instance.  Subtitles are sent only
+to the client that supplied the audio, and the server never opens a local
+WASAPI loopback device.  This makes the bridge safe for a shared team server:
+one client's language choice or disconnect cannot affect another client.
+
+Messages:
+  in:  HANDSHAKE / START_CAPTURE / STOP_CAPTURE / UPDATE_SETTINGS / CLEAR_HISTORY
+  out: connected / status / flush_ack / final / partial subtitles
 
 Usage:
-  python backend/app_bridge.py [--model base] [--port 8765]
-  Then start Electron: cd frontend && npm start
-
-This keeps VAD, punct, overlay exactly as main_app.py; only adds WS broadcasting.
+  python backend/app_bridge.py [--host 0.0.0.0] [--port 8766] [--model lazy]
 """
 import argparse
 import asyncio
 import json
 import logging
-import sys
 import os
-import threading
+import queue
+import sys
 import time
-from typing import Set
+from typing import Any, Dict, Optional, Tuple
 
 import websockets
+from websockets.exceptions import ConnectionClosed
+
 try:
     from websockets.asyncio.server import serve
-except ImportError:
+except ImportError:  # websockets < 12
     from websockets.server import serve
 
-# Add project root to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+# Add project root and backend directory to the import path.
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_BACKEND = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+if _BACKEND not in sys.path:
+    sys.path.insert(0, _BACKEND)
 
-from app.settings import load_settings
+from app.settings import load_settings  # noqa: E402
 
-# Import pipeline after path setup
-from vad.audio_utils import AudioPreprocessor
-from vad.vad_engine import SileroVadEngine
-from vad.segmenter import SpeechSegmenter
-from asr.asr_engine import OpenVINOASREngine
-from asr.streaming_asr import StreamingASRManager
-from asr.nlp_processor import NLPPostProcessor
-from app.loopback_capture import WASAPILoopbackCapture
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 HOST = os.environ.get("HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", 8766))
 
-connected: Set[websockets.WebSocketServerProtocol] = set()
-event_loop: asyncio.AbstractEventLoop = None
-pipeline = None  # type: ignore
+# Fallback model used when a client handshake omits model_name.  "lazy" means
+# do not preload anything; the first HANDSHAKE decides which model to load.
+DEFAULT_MODEL: str = "lazy"
 
-# ---------- Broadcast helpers ----------
-async def broadcast_json(obj):
-    if not connected:
-        return
-    msg = json.dumps(obj, ensure_ascii=False)
-    dead = set()
-    for ws in list(connected):
-        try:
-            await ws.send(msg)
-        except Exception:
-            dead.add(ws)
-    for d in dead:
-        connected.discard(d)
 
-def broadcast_json_threadsafe(obj):
-    if event_loop and not event_loop.is_closed():
-        asyncio.run_coroutine_threadsafe(broadcast_json(obj), event_loop)
-
-# ---------- Bridge Overlay (forwards to Electron) ----------
-class BridgeOverlay:
-    """Fake overlay that broadcasts to WS clients instead of Qt window."""
-    def push_live_text(self, text, is_final=True):
-        logging.info(f"[BridgeOverlay] push {'FINAL' if is_final else 'PARTIAL'}: {text!r}")
-        broadcast_json_threadsafe({
-            "type": "final" if is_final else "partial",
-            "text": text,
-            "language": getattr(pipeline, 'last_detected_language', None) or "en",
-            "is_final": is_final,
-        })
-
-# ---------- Dynamic ASR config (from client HANDSHAKE) ----------
-_current_cfg_key = None
-
-def apply_asr_config(cfg):
-    """Rebuild pipeline to match client's audio/subtitle language choice."""
-    global pipeline, _current_cfg_key
-    key = (
-        cfg.get("model_name") or "base",
+def config_key(cfg: Dict[str, Any]) -> Tuple[Optional[str], ...]:
+    """Identity of an ASR configuration; used to avoid rebuilding the pipeline."""
+    return (
+        str(cfg.get("model_name") or DEFAULT_MODEL or "base"),
         cfg.get("indic_lang") or None,
         cfg.get("asr_language") or None,
         cfg.get("asr_task") or None,
+        cfg.get("tgt_lang") or None,
     )
-    if pipeline is not None and key == _current_cfg_key:
-        logging.info(f"[Bridge] ASR config unchanged {key}; keeping pipeline")
-        return
-    logging.info(f"[Bridge] Switching ASR config -> model={key[0]} indic={key[1]} lang={key[2]} task={key[3]}")
-    import main_app
-    old = pipeline
-    if old is not None:
+
+
+class BridgeOverlay:
+    """Overlay that forwards captions to exactly one client session."""
+
+    def __init__(self, session: "ClientSession"):
+        self.session = session
+
+    def push_live_text(self, text: str, is_final: bool = True, source_text: Optional[str] = None):
+        payload: Dict[str, Any] = {
+            "type": "final" if is_final else "partial",
+            "text": text,
+            "language": getattr(self.session.pipeline, "last_detected_language", None)
+            or self.session.asr_language
+            or "en",
+            "is_final": is_final,
+        }
+        if source_text:
+            payload["source_text"] = source_text
+        self.session.send_threadsafe(payload)
+
+
+class ClientSession:
+    """All state belonging to a single connected client."""
+
+    def __init__(self, ws, loop: asyncio.AbstractEventLoop, default_model: str = "lazy"):
+        self.ws = ws
+        self.loop = loop
+        self.default_model = default_model
+        self.pipeline = None  # type: ignore[assignment]
+        self.config: Optional[Tuple[Optional[str], ...]] = None
+        self.sample_rate = 48000
+        self.num_channels = 2
+        self.asr_language: Optional[str] = None
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    async def send(self, obj: Dict[str, Any]) -> None:
+        if self._closed:
+            return
         try:
-            old.stop()
-        except Exception as e:
-            logging.warning(f"[Bridge] old pipeline stop failed: {e}")
-    active_indic = key[1]
-    active_model = key[0]
+            await self.ws.send(json.dumps(obj, ensure_ascii=False))
+        except Exception as exc:
+            logging.debug(f"[Bridge] send failed: {exc}")
+
+    def send_threadsafe(self, obj: Dict[str, Any]) -> None:
+        """Called from the pipeline worker thread; never blocks that thread."""
+        if self._closed or self.loop.is_closed():
+            return
+        try:
+            asyncio.run_coroutine_threadsafe(self.send(obj), self.loop)
+        except RuntimeError:
+            pass
+
+    async def apply_config(self, cfg: Dict[str, Any]) -> None:
+        """(Re)build this client's pipeline to match its handshake config."""
+        key = config_key(cfg)
+        async with self._lock:
+            if self.pipeline is not None and self.config == key:
+                logging.info(f"[Bridge] ASR config unchanged {key}; keeping pipeline")
+                return
+            self.asr_language = cfg.get("asr_language") or cfg.get("indic_lang")
+            logging.info(f"[Bridge] Switching ASR config -> {key}")
+            self.pipeline = await self.loop.run_in_executor(
+                None, apply_asr_config, cfg, self
+            )
+            self.config = key
+            self._set_format()
+            logging.info("[Bridge] ASR config applied for client")
+
+    def _set_format(self) -> None:
+        if self.pipeline and hasattr(self.pipeline, "preprocessor"):
+            try:
+                self.pipeline.preprocessor.set_format(self.sample_rate, self.num_channels)
+            except Exception as exc:
+                logging.warning(f"[Bridge] preprocessor.set_format failed: {exc}")
+
+    def feed_audio(self, raw: bytes) -> None:
+        """Queue PCM audio received from this client; drop the oldest on overflow."""
+        pipeline = self.pipeline
+        if pipeline is None:
+            return
+        self._set_format()
+        try:
+            pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
+        except queue.Full:
+            try:
+                pipeline.audio_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
+            except queue.Full:
+                pass
+
+    async def close(self) -> None:
+        self._closed = True
+        pipeline = self.pipeline
+        self.pipeline = None
+        if pipeline is not None:
+            try:
+                await self.loop.run_in_executor(None, pipeline.stop)
+            except Exception as exc:
+                logging.warning(f"[Bridge] pipeline stop failed: {exc}")
+
+
+def apply_asr_config(cfg: Dict[str, Any], session: ClientSession):
+    """Build and start a pipeline for one session.  Runs in a worker thread.
+
+    Kept at module level (rather than only as a method) so the Colab notebook
+    can verify that dynamic ASR configuration is built into the bridge.
+    """
+    import main_app
+
+    active_indic = cfg.get("indic_lang") or None
+    active_model = str(cfg.get("model_name") or session.default_model or "base")
+    if active_model.lower() in ("lazy", "none"):
+        active_model = "base"
+
     if active_indic:
         try:
             from indic_backend import load_indic_model
+
             load_indic_model()
-        except Exception as e:
-            logging.warning(f"[Bridge] IndicConformer unavailable ({e}); falling back to multilingual Whisper for {active_indic}")
+        except Exception as exc:
+            logging.warning(
+                f"[Bridge] IndicConformer unavailable ({exc}); falling back to Whisper"
+            )
             active_indic = None
             if active_model in ("indic", "lazy", "auto"):
-                active_model = "small"  # Upgrade fallback from base to high-accuracy small (244M)
+                active_model = "small"
 
-    new = main_app.DesktopLiveSubtitlePipeline(
-        overlay=BridgeOverlay(),
+    pipeline = main_app.DesktopLiveSubtitlePipeline(
+        overlay=BridgeOverlay(session),
         model_name=active_model,
         indic_lang=active_indic,
-        asr_language=key[2] or key[1],
-        asr_task=key[3] or "transcribe",
+        asr_language=cfg.get("asr_language") or active_indic,
+        asr_task=cfg.get("asr_task") or "transcribe",
+        tgt_lang=cfg.get("tgt_lang"),
+        capture_locally=False,
     )
     try:
-        new.start()
-    except Exception as e:
-        logging.warning(f"[Bridge] new pipeline start failed (no audio device?) {e}")
-    pipeline = new
-    _current_cfg_key = key
-    logging.info("[Bridge] ASR config applied")
+        pipeline.start()
+    except Exception as exc:
+        # Model loading can fail; keep the session alive so an error can be
+        # reported to this client rather than taking down the whole server.
+        logging.error(f"[Bridge] pipeline start failed: {exc}", exc_info=True)
+    return pipeline
 
-# ---------- WebSocket handler ----------
-async def handle_client(ws, *args, **kwargs):
-    global pipeline
-    logging.info(f"[Bridge] Client connected {ws.remote_address}")
-    connected.add(ws)
-    client_sample_rate = 48000
-    client_num_channels = 2
-    # Send handshake ack
+
+async def handle_client(ws, *args, **kwargs) -> None:
+    loop = asyncio.get_running_loop()
+    session = ClientSession(ws, loop, default_model=DEFAULT_MODEL)
+    remote = getattr(ws, "remote_address", "?")
+    logging.info(f"[Bridge] Client connected {remote}")
+
     try:
-        await ws.send(json.dumps({"type": "connected", "message": f"Bridge ready model={getattr(pipeline, 'model_name', '?')} task={getattr(pipeline, 'asr_task', '?')}"}))
-    except Exception:
-        pass
-    try:
+        await session.send(
+            {
+                "type": "connected",
+                "message": f"Bridge ready (model={DEFAULT_MODEL})",
+            }
+        )
         async for raw in ws:
             if isinstance(raw, str):
                 try:
                     data = json.loads(raw)
                 except Exception:
                     continue
-                t = data.get("type")
-                if t == "HANDSHAKE":
-                    logging.info(f"[Bridge] HANDSHAKE {data}")
-                    _cfg = data.get("asrConfig")
-                    if _cfg:
+                if not isinstance(data, dict):
+                    continue
+
+                msg_type = data.get("type")
+                if msg_type == "HANDSHAKE":
+                    logging.info(f"[Bridge] HANDSHAKE from {remote}: {data}")
+                    session.sample_rate = int(data.get("sampleRate") or 48000)
+                    session.num_channels = int(data.get("numChannels") or 2)
+                    cfg = data.get("asrConfig")
+                    if isinstance(cfg, dict):
                         try:
-                            await asyncio.get_running_loop().run_in_executor(None, apply_asr_config, _cfg)
-                        except Exception as e:
-                            logging.error(f"[Bridge] apply_asr_config failed: {e}", exc_info=True)
-                            await ws.send(json.dumps({"type": "final", "text": f"Server model load failed: {e}", "is_final": True}))
-                    client_sample_rate = data.get("sampleRate", 48000)
-                    client_num_channels = data.get("numChannels", 2)
-                    if pipeline and hasattr(pipeline, 'preprocessor'):
+                            await session.apply_config(cfg)
+                        except Exception as exc:
+                            logging.error(f"[Bridge] apply_asr_config failed: {exc}", exc_info=True)
+                            await session.send(
+                                {"type": "final", "text": f"Server model load failed: {exc}", "is_final": True}
+                            )
+                elif msg_type in ("START_CAPTURE", "STOP_CAPTURE"):
+                    active = msg_type == "START_CAPTURE"
+                    if session.pipeline:
                         try:
-                            pipeline.preprocessor.set_format(client_sample_rate, client_num_channels)
-                        except Exception:
-                            pass
-                elif t in ("START_CAPTURE", "STOP_CAPTURE"):
-                    active = (t == "START_CAPTURE")
-                    if pipeline:
-                        pipeline.set_capturing(active)
-                    await broadcast_json({"type": "status", "capturing": active})
-                elif t == "UPDATE_SETTINGS":
-                    settings = data.get("settings", {})
-                    model = settings.get("model")
-                    if model and pipeline:
+                            await loop.run_in_executor(None, session.pipeline.set_capturing, active)
+                        except Exception as exc:
+                            logging.warning(f"[Bridge] set_capturing failed: {exc}")
+                    await session.send({"type": "status", "capturing": active})
+                elif msg_type == "UPDATE_SETTINGS":
+                    model = (data.get("settings") or {}).get("model")
+                    if model and session.pipeline:
                         try:
-                            pipeline.set_model(model)
-                            await broadcast_json({"type": "status", "model": model, "task": getattr(pipeline, 'asr_task', None)})
-                        except Exception as e:
-                            logging.warning(f"[Bridge] set_model failed {e}")
-                elif t == "CLEAR_HISTORY":
-                    await broadcast_json({"type": "flush_ack"})
-                # Ignore other types
+                            await loop.run_in_executor(None, session.pipeline.set_model, model)
+                            await session.send(
+                                {
+                                    "type": "status",
+                                    "model": model,
+                                    "task": getattr(session.pipeline, "asr_task", None),
+                                }
+                            )
+                        except Exception as exc:
+                            logging.warning(f"[Bridge] set_model failed: {exc}")
+                elif msg_type == "CLEAR_HISTORY":
+                    await session.send({"type": "flush_ack"})
+                # Unknown control messages are intentionally ignored.
             elif isinstance(raw, bytes):
-                # Feed incoming PCM chunk to pipeline
-                if pipeline and hasattr(pipeline, 'audio_queue'):
-                    try:
-                        pipeline.preprocessor.set_format(client_sample_rate, client_num_channels)
-                    except Exception:
-                        pass
-                    try:
-                        pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
-                    except Exception:
-                        try:
-                            pipeline.audio_queue.get_nowait()
-                        except Exception:
-                            pass
-                        try:
-                            pipeline.audio_queue.put_nowait((raw, False, time.monotonic()))
-                        except Exception:
-                            pass
-    except websockets.exceptions.ConnectionClosed:
+                session.feed_audio(raw)
+    except ConnectionClosed:
         pass
+    except Exception as exc:
+        logging.error(f"[Bridge] client handler error: {exc}", exc_info=True)
     finally:
-        connected.discard(ws)
-        logging.info(f"[Bridge] Client disconnected {ws.remote_address}")
+        await session.close()
+        logging.info(f"[Bridge] Client disconnected {remote}")
 
-# ---------- Pipeline wrapper ----------
-def create_pipeline(model_name: str, overlay):
-    # Reuse DesktopLiveSubtitlePipeline but without Qt
-    import main_app
-    p = main_app.DesktopLiveSubtitlePipeline(overlay=overlay, model_name=model_name)
-    return p
 
-async def main_async(args):
-    global event_loop, pipeline
-    event_loop = asyncio.get_running_loop()
-
-    overlay = BridgeOverlay()
-    if args.model and args.model.lower() not in ("none", "lazy"):
-        try:
-            pipeline = create_pipeline(args.model, overlay)
-            try:
-                pipeline.start()
-                logging.info("[Bridge] Pipeline started (WASAPI loopback active if device present)")
-            except Exception as e:
-                logging.warning(f"[Bridge] Pipeline start failed (no audio device?) {e}. Continuing WS-only mode.")
-        except Exception as e:
-            logging.warning(f"[Bridge] Initial pipeline creation deferred: {e}")
-
-    # Start WS server immediately so port binds with 0 latency
-    logging.info(f"[Bridge] Serving on ws://{args.host}:{args.port} — ready for client connection")
+async def main_async(args) -> None:
+    global DEFAULT_MODEL
+    DEFAULT_MODEL = args.model or "lazy"
+    logging.info(
+        f"[Bridge] Serving on ws://{args.host}:{args.port} "
+        "(per-client pipelines, no local audio capture)"
+    )
     async with serve(handle_client, args.host, args.port, max_size=None):
-        while True:
-            await asyncio.sleep(1)
+        await asyncio.Future()
 
-def main():
-    parser = argparse.ArgumentParser(description="Electron Bridge — Live Subtitle WS server")
-    parser.add_argument("--host", default=HOST, help="Host to bind (default 0.0.0.0 or HOST env)")
-    parser.add_argument("--model", default=None, help="ASR model (base, distil-small.en, tiny.en). Default from settings")
-    parser.add_argument("--port", type=int, default=PORT, help=f"WebSocket port (default {PORT} or PORT env)")
+
+def create_pipeline(model_name: str, overlay, capture_locally: bool = False):
+    """Convenience wrapper used by scripts/tests that build a bridge pipeline."""
+    import main_app
+
+    return main_app.DesktopLiveSubtitlePipeline(
+        overlay=overlay, model_name=model_name, capture_locally=capture_locally
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Shared ASR WebSocket bridge")
+    parser.add_argument("--host", default=HOST, help=f"Host to bind (default {HOST})")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Fallback ASR model when a handshake omits it (default: lazy/base)",
+    )
+    parser.add_argument(
+        "--port", type=int, default=PORT, help=f"WebSocket port (default {PORT})"
+    )
     parser.add_argument("--list-devices", action="store_true", help="List WASAPI devices and exit")
     args = parser.parse_args()
 
     if args.list_devices:
         from app.loopback_capture import list_loopback_devices
+
         list_loopback_devices()
-        sys.exit(0)
+        return
 
     if not args.model:
-        s = load_settings()
-        args.model = str(s.get("model", "base"))
+        args.model = str(load_settings().get("model", "lazy"))
     args.port = int(args.port)
 
     try:
         asyncio.run(main_async(args))
     except KeyboardInterrupt:
         logging.info("[Bridge] Shutting down...")
-        if pipeline:
-            try:
-                pipeline.stop()
-            except Exception:
-                pass
+
 
 if __name__ == "__main__":
     main()

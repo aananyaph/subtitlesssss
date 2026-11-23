@@ -1,9 +1,26 @@
-# Module 1, 2, 3 Dependencies
-# Lightweight, CPU-only requirements compatible with Intel UHD 620
+# Shared server / backend dependencies
+# CPU inference works with onnxruntime; a CUDA GPU is optional.
 
-onnxruntime>=1.15.0
+# Core runtime
 numpy>=1.22.0
-websockets>=11.0
 scipy>=1.10.0
+websockets>=12.0
+psutil>=5.9.0
+
+# VAD + ASR
+onnxruntime>=1.15.0
 faster-whisper>=0.9.0
+
+# IndicTrans2 translation (used by translation_proxy.py)
+torch>=2.0.0
+transformers>=4.45.0
+sentencepiece>=0.1.99
+sacremoses>=0.0.53
+tokenizers>=0.15.0
+huggingface_hub>=0.20.0
+indic-nlp-library>=0.92
+# Optional GPU backend; CPU fallback uses the ONNX int8 model.
+IndicTransToolkit>=0.1.0
+
+# Evaluation
 jiwer>=3.0.0

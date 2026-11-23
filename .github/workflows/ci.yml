@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    name: Python Syntax Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Verify Python syntax
+        run: >-
+          python -m compileall -q backend app
+          main_app.py batch_pipeline.py make_subs.py
+          subtitle_formatter.py subtitle_translation.py
+          translation_proxy.py translator_live.py translator_gpu.py
+          core_engine.py

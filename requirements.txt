@@ -4,11 +4,26 @@ pyaudiowpatch>=0.2.12; sys_platform == 'win32'
 websockets>=12.0
 numpy>=1.24.0
 scipy>=1.10.0
+psutil>=5.9.0
+
+# ASR and VAD
 faster-whisper>=0.10.0
+onnxruntime>=1.15.0
+
+# IndicTrans2 translation (shared by live, batch and proxy paths)
+torch>=2.0.0
+torchaudio>=2.0.0
 transformers>=4.45.0
 sentencepiece>=0.1.99
 sacremoses>=0.0.53
+tokenizers>=0.15.0
+huggingface_hub>=0.20.0
 indic-nlp-library>=0.92
+# GPU translation backend only. The app automatically falls back to the ONNX
+# int8 model when this package or CUDA is unavailable.
+IndicTransToolkit>=0.1.0
+
+# Evaluation / utilities
 sacrebleu>=2.3.0
 jiwer>=3.0.0
 pyngrok>=7.1.0

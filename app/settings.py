@@ -44,6 +44,13 @@ DEFAULT_SETTINGS: Dict[str, object] = {
     "asr_mode": os.environ.get("ASR_MODE", "shared"),
     "remote_asr_url": os.environ.get("REMOTE_ASR_URL", "ws://localhost:8765"),
     "show_source": False,
+    # Language/subtitle choices made in the control panel.  Without these
+    # entries load_settings() filters them out and the UI never restores them.
+    "audio_lang": "auto",
+    "subtitle_lang": "en",
+    "asr_language": None,
+    "indic_lang": None,
+    "tgt_lang": None,
 }
 
 
