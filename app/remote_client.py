@@ -68,8 +68,10 @@ class RemoteLiveSubtitlePipeline:
         # 1. Spoken audio language (asr_language)
         asr_lang = (
             cfg.get("asr_language")
+            or cfg.get("indic_lang")
             or self.asr_language
             or st.get("asr_language")
+            or st.get("indic_lang")
             or "en"
         )
         if asr_lang:
@@ -90,6 +92,7 @@ class RemoteLiveSubtitlePipeline:
         # Do not send tgt_lang equal to asr_language unless needed; proxy bypasses when equal
         if tgt and tgt != cfg.get("asr_language") and tgt in ("en", "hi", "kn"):
             cfg["tgt_lang"] = tgt
+            cfg["subtitle_lang"] = tgt
         else:
             cfg.pop("tgt_lang", None)
             cfg.pop("target_lang", None)
@@ -102,6 +105,8 @@ class RemoteLiveSubtitlePipeline:
             "sampleRate": self._fmt[0],
             "numChannels": self._fmt[1],
             "asrConfig": self.asr_config,
+            "tgt_lang": self.asr_config.get("tgt_lang"),
+            "subtitle_lang": self.asr_config.get("tgt_lang"),
         })
 
     def start(self):
@@ -207,7 +212,9 @@ class RemoteLiveSubtitlePipeline:
                         self.overlay.push_live_text(f"Connected to shared ASR: {self.server_url}", is_final=True)
 
                     # Send handshake with audio specs
-                    await ws.send(self._build_handshake_payload())
+                    handshake = self._build_handshake_payload()
+                    logging.info(f"[RemotePipeline] Sending handshake to server: {handshake}")
+                    await ws.send(handshake)
 
                     # Run sender and receiver concurrently
                     send_task = asyncio.create_task(self._send_audio_loop(ws))

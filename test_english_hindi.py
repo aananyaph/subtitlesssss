@@ -170,6 +170,40 @@ class TestEnglishToHindi(unittest.TestCase):
         tr.assert_called_once()
         self.assertEqual(overlay.pushed[0][0], "ನಿಜವಾದ ಆತ್ಮವಿಶ್ವಾಸ ಶಾಂತವಾಗಿದೆ.")
 
+    def test_11_hindi_to_english_handshake_and_proxy(self):
+        cfg = resolve_model_strategy("hi", "en", "auto")
+        self.assertEqual(cfg["asr_language"], "hi")
+        self.assertEqual(cfg["tgt_lang"], "en")
+        self.assertEqual(cfg["indic_lang"], "hi")
+
+        client = RemoteLiveSubtitlePipeline(asr_config=dict(cfg), tgt_lang=cfg["tgt_lang"])
+        state = {"src": None, "tgt": None}
+        with mock.patch.object(translation_proxy, "preload"):
+            rewritten = json.loads(
+                translation_proxy.rewrite_handshake(client._build_handshake_payload(), state)
+            )
+        self.assertEqual(rewritten["asrConfig"]["asr_task"], "transcribe")
+        self.assertEqual(rewritten["asrConfig"]["model_name"], "indic")
+        self.assertEqual(state["src"], "hi")
+        self.assertEqual(state["tgt"], "en")
+
+    def test_12_hindi_to_kannada_handshake_and_proxy(self):
+        cfg = resolve_model_strategy("hi", "kn", "auto")
+        self.assertEqual(cfg["asr_language"], "hi")
+        self.assertEqual(cfg["tgt_lang"], "kn")
+        self.assertEqual(cfg["indic_lang"], "hi")
+
+        client = RemoteLiveSubtitlePipeline(asr_config=dict(cfg), tgt_lang=cfg["tgt_lang"])
+        state = {"src": None, "tgt": None}
+        with mock.patch.object(translation_proxy, "preload"):
+            rewritten = json.loads(
+                translation_proxy.rewrite_handshake(client._build_handshake_payload(), state)
+            )
+        self.assertEqual(rewritten["asrConfig"]["asr_task"], "transcribe")
+        self.assertEqual(rewritten["asrConfig"]["model_name"], "indic")
+        self.assertEqual(state["src"], "hi")
+        self.assertEqual(state["tgt"], "kn")
+
 
 if __name__ == "__main__":
     unittest.main()

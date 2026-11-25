@@ -253,10 +253,13 @@ def rewrite_handshake(raw, state):
         return raw
     cfg = dict(cfg)
 
-    raw_asr_lang = cfg.get("asr_language")
+    raw_asr_lang = cfg.get("asr_language") or cfg.get("indic_lang") or data.get("asr_language")
     if not raw_asr_lang or str(raw_asr_lang).lower() in ("auto", "none"):
-        log.info("translation layer OFF: asr_language is unset or 'auto' (explicit source language required for translation router)")
-        return raw
+        if cfg.get("model_name") == "indic" or cfg.get("indic_lang"):
+            raw_asr_lang = cfg.get("indic_lang") or "hi"
+        else:
+            log.info("translation layer OFF: asr_language is unset or 'auto' (explicit source language required for translation router)")
+            return raw
 
     src = norm_lang(raw_asr_lang)
     tgt = None
@@ -274,7 +277,7 @@ def rewrite_handshake(raw, state):
         if src in INDIC_ASR:
             cfg.update(model_name="indic", indic_lang=src, asr_language=src)
         state["src"], state["tgt"] = src, tgt
-        log.info(f"translation layer ON {src}->{tgt}; ASR forced to transcribe: {cfg}")
+        log.info(f"translation layer ACTIVATED: {src}->{tgt} (backend={TRANSLATOR_BACKEND}); ASR forced to transcribe: {cfg}")
         preload(src, tgt)
         data["asrConfig"] = cfg
         return json.dumps(data, ensure_ascii=False)

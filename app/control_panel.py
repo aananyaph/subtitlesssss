@@ -784,6 +784,41 @@ class ControlPanelWindow(QMainWindow if QT_BINDING else object):
         self.lbl_mode_tag.setText(f"[{strategy['mode_tag']}]")
         self.lbl_model_desc.setText(str(strategy["description"]))
 
+        # Persist language choices immediately so user selections are remembered
+        try:
+            from app.settings import load_settings, save_settings
+            st = load_settings()
+            st["audio_lang"] = audio_lang
+            st["asr_language"] = strategy["asr_language"]
+            st["indic_lang"] = strategy.get("indic_lang")
+            st["model"] = strategy.get("model_name")
+            st["tgt_lang"] = strategy.get("tgt_lang")
+            st["subtitle_lang"] = sub_lang
+            st["show_source"] = self.chk_show_source.isChecked()
+            save_settings(st)
+        except Exception:
+            pass
+
+        # If capture is active, reconfigure and restart the pipeline with the newly chosen language strategy
+        if getattr(self, "is_running", False) and hasattr(self, "start_requested") and self.start_requested:
+            cfg = {
+                "model_name": strategy["model_name"],
+                "indic_lang": strategy["indic_lang"],
+                "asr_language": strategy["asr_language"],
+                "asr_task": strategy["asr_task"],
+                "tgt_lang": strategy.get("tgt_lang"),
+                "show_source": self.chk_show_source.isChecked(),
+                "device_index": self.combo_device.currentData(),
+                "font_size": self.combo_font_size.currentData(),
+                "position": self.combo_pos.currentData(),
+                "audio_lang_code": audio_lang,
+                "subtitle_lang_code": sub_lang,
+                "asr_mode": self.settings.get("asr_mode", "shared"),
+                "remote_asr_url": self.settings.get("remote_asr_url", "ws://localhost:8765"),
+            }
+            logging.info(f"[ControlCenter] Dynamic language switch to {audio_lang} ➔ {sub_lang}; restarting pipeline...")
+            self.start_requested.emit(cfg)
+
     def _populate_devices(self):
         self.combo_device.clear()
         self.combo_device.addItem("Auto-Detect Default Playback Device", None)
