@@ -70,7 +70,13 @@ def load_indic_model():
     """Load (or return cached) IndicConformer model."""
     global _MODEL
     if _MODEL is not None:
-        return _MODEL
+        try:
+        import torch
+        if torch.cuda.is_available():
+            _MODEL = _MODEL.to("cuda")
+    except Exception:
+        pass
+    return _MODEL
 
     try:
         from transformers import AutoModel
@@ -105,6 +111,12 @@ def load_indic_model():
                     f"https://huggingface.co/{MODEL_ID} and set HF_TOKEN."
                 ) from e
             raise RuntimeError(f"Could not load {MODEL_ID}: {e}") from e
+    try:
+        import torch
+        if torch.cuda.is_available():
+            _MODEL = _MODEL.to("cuda")
+    except Exception:
+        pass
     return _MODEL
 
 
@@ -192,17 +204,28 @@ def transcribe_indic(source, language="kn", decoding="ctc", progress_callback=No
     if audio.size == 0:
         return {"language": language, "segments": []}
 
-    chunks = _vad_chunks(audio)
+    if len(audio) <= 15 * SAMPLE_RATE:
+        chunks = [(0, len(audio))]
+    else:
+        chunks = _vad_chunks(audio)
     if not chunks:
         return {"language": language, "segments": []}
 
     import torch
 
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     model = load_indic_model()
+    try:
+        model = model.to(device)
+    except Exception:
+        pass
+
     segments = []
     total_chunks = len(chunks)
     for idx, (start, end) in enumerate(chunks, 1):
         wav = torch.from_numpy(audio[start:end]).unsqueeze(0)
+        if device == "cuda":
+            wav = wav.to("cuda")
         try:
             with torch.no_grad():
                 text = model(wav, language, decoding)

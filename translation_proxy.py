@@ -429,7 +429,7 @@ async def handler(client):
 
 
 async def main():
-    async with serve(handler, "0.0.0.0", LISTEN_PORT, max_size=None):
+    async with serve(handler, "0.0.0.0", LISTEN_PORT, max_size=None, ping_interval=None):
         log.info(f"translation proxy listening :{LISTEN_PORT} -> {UPSTREAM} "
                  f"(FORCE_TGT={FORCE_TGT}, MERGE_WAIT={MERGE_WAIT}, "
                  f"BACKEND={TRANSLATOR_BACKEND}, MAX_RESIDENT={MAX_RESIDENT_MODELS})")

@@ -71,6 +71,24 @@ except ImportError:
 # ── Feature flag ───────────────────────────────────────────────────────────────
 ASYNC_LLM_CORRECTION_ENABLED = os.environ.get("ASYNC_LLM_CORRECTION_ENABLED", "").lower() in {"1", "true", "yes"}
 
+# ASR device/quantization: auto-detect CUDA GPU (e.g. Colab T4) with CPU fallback.
+def _detect_default_asr_device():
+    env_dev = os.environ.get("ASR_DEVICE")
+    if env_dev:
+        return env_dev.strip()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except Exception:
+        pass
+    return "CPU"
+
+ASR_DEVICE = _detect_default_asr_device()
+ASR_COMPUTE_TYPE = os.environ.get("ASR_COMPUTE_TYPE", "").strip() or (
+    "float16" if ASR_DEVICE.lower().startswith(("cuda", "gpu")) else "int8"
+)
+
 # ── Global timeout for staleness safety net (overridden in main() from settings) ──
 STALE_AUDIO_TIMEOUT_SEC = 15.0
 try:
@@ -302,10 +320,10 @@ class DesktopLiveSubtitlePipeline:
         )
         self.vad_engine = SileroVadEngine()
         self.segmenter = SpeechSegmenter(
-            threshold=0.35,
-            neg_threshold=0.20,
+            threshold=0.25,
+            neg_threshold=0.15,
             min_speech_duration_ms=100,
-            min_silence_duration_ms=350,
+            min_silence_duration_ms=200,
             sample_rate=16000,
             frame_size=512,
             min_chunk_floor_sec=min_chunk_floor_sec,
@@ -316,12 +334,33 @@ class DesktopLiveSubtitlePipeline:
             default_lang, default_task = _resolve_asr_task_language(model_name)
             self.asr_language = asr_language if asr_language is not None else default_lang
             self.asr_task = asr_task if asr_task is not None else default_task
-            logging.info(f"[Pipeline] Loading ASR model '{model_name}' (task={self.asr_task} lang={self.asr_language!r}, Intel CPU optimized)...")
-            self.asr_engine = OpenVINOASREngine(
-                model_size=model_name,
-                device="CPU",
-                language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+            logging.info(
+                f"[Pipeline] Loading ASR model '{model_name}' (task={self.asr_task} lang={self.asr_language!r}, "
+                f"device={ASR_DEVICE}, compute={ASR_COMPUTE_TYPE})..."
             )
+            if ASR_DEVICE.lower().startswith(("cuda", "gpu")):
+                try:
+                    self.asr_engine = FasterWhisperEngine(
+                        model_size=model_name,
+                        device="cuda",
+                        compute_type="float16",
+                        language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+                    )
+                except Exception as cuda_err:
+                    logging.warning(f"[Pipeline] CUDA ASR load failed ({cuda_err}); falling back to OpenVINO on CPU.")
+                    self.asr_engine = OpenVINOASREngine(
+                        model_size=model_name,
+                        device="CPU",
+                        compute_type="int8",
+                        language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+                    )
+            else:
+                self.asr_engine = OpenVINOASREngine(
+                    model_size=model_name,
+                    device=ASR_DEVICE,
+                    compute_type=ASR_COMPUTE_TYPE,
+                    language=self.asr_language if self.asr_language is not None else "en" if self.asr_task == "transcribe" else None,
+                )
             self.streaming_asr = StreamingASRManager(
                 asr_engine=self.asr_engine,
                 sample_rate=16000,
@@ -551,7 +590,8 @@ class DesktopLiveSubtitlePipeline:
                 asr_time_s = time.perf_counter() - t0
                 rtf = asr_time_s / audio_dur_s if audio_dur_s > 0 else 0.0
                 text = " ".join(s["text"] for s in result.get("segments", [])).strip()
-                if text and needs_translation(self.indic_lang, self.tgt_lang):
+                raw_indic_text = text
+                if getattr(self, "capture_locally", True) and text and needs_translation(self.indic_lang, self.tgt_lang):
                     text = translate_text(text, self.indic_lang, self.tgt_lang)
                 char_count = len(text)
                 print(
@@ -564,7 +604,14 @@ class DesktopLiveSubtitlePipeline:
                         flush=True,
                     )
                 if text and self.overlay:
-                    self.overlay.push_live_text(text, is_final=True)
+                    try:
+                        self.overlay.push_live_text(
+                            text,
+                            is_final=True,
+                            source_text=raw_indic_text if getattr(self, "capture_locally", True) and self.tgt_lang else None,
+                        )
+                    except TypeError:
+                        self.overlay.push_live_text(text, is_final=True)
                 if text and self.subtitle_callback:
                     try:
                         self.subtitle_callback(text, True)
@@ -607,7 +654,11 @@ class DesktopLiveSubtitlePipeline:
             return
 
         final_text = nlp_res["text"]
-        translation_applied = needs_translation(effective_lang or self.asr_language, self.tgt_lang)
+        raw_source_text = final_text
+        translation_applied = (
+            getattr(self, "capture_locally", True)
+            and needs_translation(effective_lang or self.asr_language, self.tgt_lang)
+        )
         if translation_applied:
             src_for_translation = (effective_lang or self.asr_language or "en").strip().lower()
             final_text = translate_text(final_text, src_for_translation, self.tgt_lang)
@@ -619,7 +670,14 @@ class DesktopLiveSubtitlePipeline:
 
         # Push initial caption to Qt Desktop Overlay immediately (unchanged pipeline)
         if self.overlay:
-            self.overlay.push_live_text(final_text, is_final=is_final)
+            try:
+                self.overlay.push_live_text(
+                    final_text,
+                    is_final=is_final,
+                    source_text=raw_source_text if translation_applied else None,
+                )
+            except TypeError:
+                self.overlay.push_live_text(final_text, is_final=is_final)
         if self.subtitle_callback:
             try:
                 self.subtitle_callback(final_text, is_final)

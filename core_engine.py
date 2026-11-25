@@ -189,7 +189,7 @@ def transcribe(
     source,
     language=None,
     model_size="small",
-    device="cpu",
+    device=None,
     beam_size=5,
     vad_filter=True,
     backend="auto",
@@ -201,6 +201,12 @@ def transcribe(
     language : None = auto-detect, else ISO code ("en", "hi", "kn")
     backend  : "auto" routes by language, or force "whisper" / "indic"
     """
+    if device is None:
+        try:
+            import torch
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        except Exception:
+            device = "cpu"
     if backend not in _VALID_BACKENDS:
         raise ValueError(
             f"Invalid backend {backend!r}. Choose one of: {sorted(_VALID_BACKENDS)}"

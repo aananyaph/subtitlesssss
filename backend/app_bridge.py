@@ -294,7 +294,7 @@ async def main_async(args) -> None:
         f"[Bridge] Serving on ws://{args.host}:{args.port} "
         "(per-client pipelines, no local audio capture)"
     )
-    async with serve(handle_client, args.host, args.port, max_size=None):
+    async with serve(handle_client, args.host, args.port, max_size=None, ping_interval=None):
         await asyncio.Future()
 
 
