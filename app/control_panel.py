@@ -447,7 +447,7 @@ QTextEdit.live-box {
     border: 1px solid #1F2937;
     border-radius: 8px;
     padding: 10px;
-    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    font-family: 'Nirmala UI', 'Segoe UI', Arial, sans-serif;
     font-size: 13px;
     line-height: 1.4;
 }
